@@ -1,0 +1,1218 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="robots" content="noindex, nofollow"><meta name="description" content="在 MiniMax-H3 视频生成模型上联合输出 RGB、深度和相机的训练报告：模型方案、训练数据、B1 感知读出与 G1 联合生成的结果、可视化和消融计划。"><style>:root{color-scheme:light}body{margin:0;font:14px system-ui}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<title>H3-4D 训练报告</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@600&display=swap">
+<style>
+/* Layout: the same lab-notebook layout as the GAE reports. One reading column (~72ch) for prose;
+   figure plates use the full content width. Stages (A, B) and findings carry stable labels because
+   the text refers back to them. Colour: cool paper, ink, one teal accent; data colours follow the run. */
+:root {
+  --paper: #f4f6f7; --surface: #ffffff; --sunk: #eceff2;
+  --ink: #12161b; --ink-2: #4a535e; --ink-3: #78818c; --rule: #dce1e6;
+  --accent: #0d6b5b; --accent-weak: #dff0ec; --accent-ink: #ffffff;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s7: #4a3aa7;
+  --ref: #9aa3ad; --grid: #e7ebef;
+  --good: #1a7f4b; --good-weak: #e1f3e8; --warn: #a35f00; --warn-weak: #fbefd9; --bad: #b42d2d; --bad-weak: #f8e3e3;
+  --font-display: "Newsreader", "Noto Serif SC", "Songti SC", Georgia, serif;
+  --font-body: "IBM Plex Sans", "Noto Sans SC", "PingFang SC", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+  --step--1: 0.8125rem; --step-0: 0.9375rem; --step-1: 1.125rem; --step-2: 1.5rem; --step-3: 2.25rem;
+  --gutter: clamp(16px, 4vw, 40px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0e1114; --surface: #161a1e; --sunk: #1c2126;
+    --ink: #edf1f4; --ink-2: #b2bac4; --ink-3: #8a939e; --rule: #2a3037;
+    --accent: #4fc2a8; --accent-weak: #15302a; --accent-ink: #0b1513;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s7: #9085e9;
+    --ref: #6c7580; --grid: #232930;
+    --good: #5cc98d; --good-weak: #12291d; --warn: #e2a64b; --warn-weak: #2c2212; --bad: #ef7d7d; --bad-weak: #2e1616;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0e1114; --surface: #161a1e; --sunk: #1c2126;
+  --ink: #edf1f4; --ink-2: #b2bac4; --ink-3: #8a939e; --rule: #2a3037;
+  --accent: #4fc2a8; --accent-weak: #15302a; --accent-ink: #0b1513;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s7: #9085e9;
+  --ref: #6c7580; --grid: #232930;
+  --good: #5cc98d; --good-weak: #12291d; --warn: #e2a64b; --warn-weak: #2c2212; --bad: #ef7d7d; --bad-weak: #2e1616;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font-family: var(--font-body); font-size: var(--step-0); line-height: 1.7; }
+.wrap { max-width: 1080px; margin: 0 auto; padding-inline: var(--gutter); padding-block: 40px 80px; }
+.prose { max-width: 72ch; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; line-height: 1.25; text-wrap: balance; margin: 0; }
+h1 { font-size: var(--step-3); }
+h2 { font-size: var(--step-2); margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--rule); }
+h3 { font-size: var(--step-1); margin-top: 32px; }
+p { margin: 12px 0; }
+.eyebrow { font-family: var(--font-mono); font-size: var(--step--1); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+.lede { color: var(--ink-2); font-size: var(--step-1); margin-top: 12px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.chip { font-size: var(--step--1); padding: 2px 10px; border-radius: 999px; border: 1px solid var(--rule); background: var(--surface); color: var(--ink-2); white-space: nowrap; }
+.chip.good { background: var(--good-weak); color: var(--good); border-color: transparent; }
+.chip.warn { background: var(--warn-weak); color: var(--warn); border-color: transparent; }
+.chip.bad { background: var(--bad-weak); color: var(--bad); border-color: transparent; }
+.chip.live { background: var(--accent-weak); color: var(--accent); border-color: transparent; }
+nav.toc { margin-top: 24px; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: var(--step--1); }
+nav.toc a { color: var(--ink-2); text-decoration: none; border-bottom: 1px solid var(--rule); }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); border-color: var(--accent); }
+a { color: var(--accent); }
+code, .mono { font-family: var(--font-mono); font-size: .9em; }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 20px; }
+.finding { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+.finding .tag { font-family: var(--font-mono); font-size: var(--step--1); color: var(--ink-3); }
+.finding b { display: block; margin: 2px 0 4px; font-weight: 600; }
+.finding p { margin: 0; color: var(--ink-2); font-size: var(--step--1); line-height: 1.6; }
+.block { display: grid; grid-template-columns: 6.5em 1fr; gap: 6px 14px; margin: 16px 0; max-width: 80ch; }
+.block dt { font-weight: 600; color: var(--ink-2); font-size: var(--step--1); padding-top: 2px; }
+.block dd { margin: 0; min-width: 0; }
+figure { margin: 24px 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px; }
+figure .fig-title { font-weight: 600; margin-bottom: 8px; }
+figcaption { margin-top: 12px; font-size: var(--step--1); color: var(--ink-2); display: grid; gap: 4px; max-width: 90ch; }
+figcaption span b { color: var(--ink); font-weight: 600; margin-right: 6px; }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.chart { min-width: 0; position: relative; }
+.chart h4 { margin: 0 0 4px; font-size: var(--step--1); font-weight: 600; color: var(--ink-2); }
+.chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--step--1); color: var(--ink-2); margin-top: 6px; }
+.legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
+.legend i.dash { border-top-style: dashed; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 8px; font-size: 12px; line-height: 1.5; color: var(--ink); box-shadow: 0 2px 10px rgba(0,0,0,.08); white-space: nowrap; z-index: 2; }
+.tbl { overflow-x: auto; margin-top: 8px; }
+table { border-collapse: collapse; font-size: var(--step--1); width: 100%; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--ink-2); font-weight: 600; background: var(--sunk); }
+td.best { font-weight: 600; color: var(--good); }
+td.badv { color: var(--bad); }
+tr.sep td { border-top: 2px solid var(--rule); }
+.imgs { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.imgs > div { min-width: 0; }
+.imgs img { width: 100%; border-radius: 4px; display: block; }
+.imgs .cap { font-size: var(--step--1); color: var(--ink-3); margin-top: 4px; }
+.flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin: 16px 0; }
+.flow .node { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 12px; font-size: var(--step--1); min-width: 0; flex: 1 1 140px; }
+.flow .node b { display: block; font-size: var(--step-0); }
+.flow .node.frozen { background: var(--sunk); }
+.flow .node.train { border-color: var(--accent); }
+.flow .arrow { align-self: center; color: var(--ink-3); }
+.note { background: var(--accent-weak); border-radius: 8px; padding: 12px 16px; margin: 16px 0; max-width: 80ch; }
+.pending { color: var(--ink-3); font-style: italic; }
+.progress { height: 8px; background: var(--sunk); border-radius: 999px; overflow: hidden; margin-top: 8px; max-width: 520px; }
+.progress > div { height: 100%; background: var(--accent); }
+dl.gloss { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: var(--step--1); max-width: 90ch; }
+dl.gloss dt { font-weight: 600; }
+dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
+.viewer { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px; margin-top: 16px; }
+.viewer .vfig { margin: 12px 0 0; border: none; padding: 0; background: transparent; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.controls label { font-size: var(--step--1); color: var(--ink-2); font-weight: 600; }
+.controls select { font: inherit; font-size: var(--step--1); padding: 4px 8px; border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); color: var(--ink); max-width: 100%; min-width: 0; }
+.controls button { font: inherit; font-size: var(--step--1); padding: 3px 10px; border: 1px solid var(--rule); border-radius: 999px; background: var(--paper); color: var(--ink-2); cursor: pointer; }
+.controls button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.controls button:focus-visible, .controls select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.controls.small { margin-bottom: 6px; }
+.vmeta { margin-top: 12px; overflow-x: auto; }
+.colhead { display: grid; grid-template-columns: repeat(var(--cols, 5), 1fr); font-size: var(--step--1); color: var(--ink-2); text-align: center; font-weight: 600; }
+#vImg { width: 100%; display: block; border-radius: 4px; background: var(--sunk); min-height: 120px; }
+.vrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.vrow > figure { min-width: 0; }
+#vCloud, #g1Cloud { width: 100%; height: auto; aspect-ratio: 640 / 420; max-width: 100%; display: block; background: var(--sunk); border-radius: 6px; cursor: grab; touch-action: none; }
+#vTraj svg, #g1Traj svg { width: 100%; height: auto; display: block; }
+@media (max-width: 560px) {
+  .block { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; }
+  dl.gloss dd { margin-bottom: 6px; }
+}
+@media (prefers-reduced-motion: no-preference) { nav.toc a { transition: color .15s; } }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">MiniMax-H3 × VGGT-Ω · 几何分支</div>
+  <h1>H3-4D 训练报告</h1>
+  <p class="lede prose">在 MiniMax-H3 视频生成模型上接 VGGT-Ω 的预训练深度头和相机头，让同一个模型同时输出 RGB、深度和相机位姿。本报告记录上线前的核对、阶段 A（过拟合验证）和阶段 B（TartanAir 全量训练）、户外片段深度异常的排查，以及之后的 G1：从 H3 原始权重出发、只给一张图就联合生成 RGB 视频 + 深度 + 相机（进行中）。</p>
+  <div class="meta" id="chips"></div>
+  <nav class="toc" aria-label="目录">
+    <a href="#summary">要点</a><a href="#setup">模型方案</a><a href="#data">训练数据</a><a href="#checks">上线前核对</a>
+    <a href="#stageA">阶段 A 过拟合</a><a href="#stageB">阶段 B 全量训练</a><a href="#vis">可视化结果</a><a href="#outdoor">户外片段排查</a><a href="#g1">G1 联合生成</a><a href="#ablations">消融实验计划</a><a href="#next">B1 结论与下一步</a><a href="#glossary">指标说明</a>
+  </nav>
+</header>
+
+<section id="summary">
+  <h2>要点</h2>
+  <div class="summary" id="summaryCards"></div>
+</section>
+
+<section id="setup">
+  <h2>模型方案</h2>
+  <div class="prose">
+    <p><b>目标</b>：一个模型同时生成 RGB 视频、逐帧深度和逐帧相机位姿（4D）。H3 原有的 RGB 通路（VAE 编码器 → DiT → RGB 解码器）保持不变，旁边接一条几何分支。几何分支从 H3 的 DiT 中间层读特征，经过适配器换成 VGGT-Ω 头部要求的 token 格式，再交给 VGGT-Ω 预训练好的 DPT 深度头和相机头。</p>
+  </div>
+  <div class="flow" role="img" aria-label="结构示意：RGB 视频经 H3 VAE 编码，DiT 读出第 12/24/36/49 层特征，适配器转换后送入 VGGT-Ω 深度头和相机头">
+    <div class="node frozen"><b>22 帧 RGB</b>384×512</div><div class="arrow">→</div>
+    <div class="node frozen"><b>H3 VAE 编码器</b>冻结 · 潜变量 24×7×24×32</div><div class="arrow">→</div>
+    <div class="node frozen"><b>H3 DiT</b>冻结 + LoRA r64 · 读第 12/24/36/49 层</div><div class="arrow">→</div>
+    <div class="node train"><b>适配器 ×4 + 相机 query</b>新训练 · 换成每帧 24×32 个 2048 维 token</div><div class="arrow">→</div>
+    <div class="node train"><b>VGGT-Ω 深度头 / 相机头</b>预训练权重 · 微调 → 深度 + 置信度 + 位姿</div>
+  </div>
+
+  <h3>各组件</h3>
+  <div class="tbl"><table>
+    <tr><th>组件</th><th>输入 → 输出</th><th>参数量</th><th>状态</th><th>说明</th></tr>
+    <tr><td>H3 VAE 编码器</td><td style="text-align:left">22×3×384×512 → 24×7×24×32</td><td>—</td><td>冻结（fp32）</td><td style="text-align:left;white-space:normal">空间压缩 16 倍；时间上第 0 帧单独一个潜帧，之后每 4 帧一个（17 帧一块：1+4+4+4+4）</td></tr>
+    <tr><td>H3 DiT（Omni）</td><td style="text-align:left">7×12×16 = 1344 个视频 token + 1 个空文本 token</td><td>33B</td><td>冻结（bf16）+ LoRA</td><td style="text-align:left;white-space:normal">50 层，隐藏维 5376。“干净读出”：输入未加噪的潜变量，时间步标签 t = 1（H3 中 1 表示干净）。读第 12、24、36、49 层的视频 token</td></tr>
+    <tr><td>LoRA</td><td style="text-align:left">DiT 每层注意力的 q / k / v / o</td><td>161M</td><td>训练</td><td style="text-align:left;white-space:normal">秩 64。目前只运行几何读出；若用同一个 DiT 做 RGB 生成，需要关闭这组 LoRA，否则会改变 RGB 输出（尚未实现和验证）</td></tr>
+    <tr><td>适配器 ×4</td><td style="text-align:left">1344×5376 → 每帧 24×32×2048</td><td>111M</td><td>训练</td><td style="text-align:left;white-space:normal">LayerNorm + 线性层 5376→2048；每个 DiT token 覆盖 4 帧 × 32×32 像素，展开成 4（时间）× 2×2（空间）个子 token，加可学习的子位置嵌入；再过残差 MLP（2048→4096→2048）。正好对上 VGGT-Ω 的 1/16 网格</td></tr>
+    <tr><td>相机 query</td><td style="text-align:left">最后一层适配特征 → 每帧 17 个 token</td><td>101M</td><td>训练</td><td style="text-align:left;white-space:normal">17 个可学习 query（1 个相机 + 16 个寄存器，对应 VGGT-Ω 的格式），2 层交叉注意力；第 0 帧加“参考帧”嵌入</td></tr>
+    <tr><td>DPT 深度头</td><td style="text-align:left">4 层 token → 深度 + 置信度（384×512）</td><td>32M</td><td>预训练 · 微调</td><td style="text-align:left;white-space:normal">VGGT-Ω DenseHead 原样加载；深度 = exp(·)，置信度 = 1 + exp(·)</td></tr>
+    <tr><td>相机头</td><td style="text-align:left">各帧 17 个 token → 9 维位姿</td><td>204M</td><td>预训练 · 微调</td><td style="text-align:left;white-space:normal">VGGT-Ω CameraHead 原样加载；4 层跨帧自注意力；输出平移 3 + 四元数 4 + 视场角 2</td></tr>
+    <tr><td>教师 VGGT-Ω 1B-512</td><td style="text-align:left">同一组 RGB 帧</td><td>1.1B</td><td>冻结</td><td style="text-align:left;white-space:normal">只用于蒸馏和评估参照；官方权重（sha256 已校验），FAIR 非商业研究许可</td></tr>
+  </table></div>
+
+  <h3>损失函数</h3>
+  <div class="tbl"><table>
+    <tr><th>项</th><th>权重</th><th>内容</th></tr>
+    <tr><td>相机</td><td>5</td><td style="text-align:left;white-space:normal">VGGT-Ω 官方相机损失：平移（×2）、旋转（×1）、焦距（×1），外加两两相对位姿项</td></tr>
+    <tr><td>深度</td><td>5</td><td style="text-align:left;white-space:normal">带置信度的 L1（绝对误差 + 0.2 × 相对误差），外加梯度项（4 个尺度）和法线项（权重 0.1，只对合成数据）</td></tr>
+    <tr><td>点云</td><td>5</td><td style="text-align:left;white-space:normal">用预测深度和预测相机反投影出点云，与真值点云比较；把深度和相机绑在一起</td></tr>
+    <tr class="sep"><td>蒸馏 · 特征</td><td>1</td><td style="text-align:left;white-space:normal">适配器输出与教师第 4/11/17/23 层 token 的 MSE（先各自做 LayerNorm）</td></tr>
+    <tr><td>蒸馏 · 相机 token</td><td>1</td><td style="text-align:left;white-space:normal">17 个相机 token 与教师的 MSE</td></tr>
+    <tr><td>蒸馏 · 伪标签</td><td>0.5</td><td style="text-align:left;white-space:normal">只约束与尺度无关的量：对数深度（去掉每段的整体偏移）、旋转（对齐 ±q 符号）+ 视场角、按每段平均长度归一化的平移</td></tr>
+  </table></div>
+  <dl class="block">
+    <dt>真值尺度</dt><dd>与 VGGT-Ω 一致：以第 0 帧相机为原点，所有有效点到原点的平均距离缩放为 1。模型输出不做归一化，必须直接输出这个尺度。</dd>
+    <dt>蒸馏日程</dt><dd>三项蒸馏的权重在训练前一半线性降到 0，之后不再运行教师（后半程每步更快）。</dd>
+  </dl>
+
+  <h3>训练超参数</h3>
+  <div class="tbl"><table>
+    <tr><th>项目</th><th>阶段 A（过拟合验证）</th><th>阶段 B（B1，全量）</th></tr>
+    <tr><td>可训练部分</td><td>A1 / A2：适配器 + 相机 query + 两个头；A3：再加 LoRA</td><td>适配器 + 相机 query + 两个头 + LoRA</td></tr>
+    <tr><td>batch</td><td>1</td><td>7（显存探测得出，占满显存）</td></tr>
+    <tr><td>训练长度</td><td>A1 500 步；A2 / A3 1500 步</td><td>9,143 步 = 64,000 段（约 1 天）</td></tr>
+    <tr><td>学习率</td><td colspan="2" style="text-align:center">适配器 / 相机 query / LoRA 1e-4，预训练头 1e-5；AdamW（β 0.9 / 0.95，权重衰减 0.05）</td></tr>
+    <tr><td>学习率日程</td><td>预热 50 步，余弦退火到 10%</td><td>预热 457 步（5%），余弦退火到 10%</td></tr>
+    <tr><td>梯度裁剪</td><td colspan="2" style="text-align:center">每个参数组单独裁剪到 1.0</td></tr>
+    <tr><td>速度</td><td>batch 1</td><td>适配器和 DPT 头开梯度检查点；每段 1.38 s（前半程有教师）</td></tr>
+    <tr><td>评估 / 存盘</td><td>每 100 或 250 步评估；结束时存权重</td><td>每 457 步评估并保存可续训检查点；崩溃自动续训</td></tr>
+  </table></div>
+  <div class="note prose"><b>针对 h3_depth 的教训做的改动。</b>h3_depth 训练了很多步，深度在可过拟合的小数据上仍然不好。新方案里深度不再经过 RGB VAE 编码和解码，损失直接在深度上按真值计算；用专门的深度头输出；先做过拟合验证再上全量；指标同时看三种尺度对齐，并和常数深度基线、教师对比。</div>
+</section>
+
+<section id="data">
+  <h2>训练数据</h2>
+  <div class="prose"><p>全部使用 TartanAir V1（合成数据，深度和相机位姿是精确真值），沿用 h3_depth 的场景划分，训练场景和验证场景完全不重叠，测试场景从未使用。</p></div>
+  <figure>
+    <div class="fig-title">数据划分</div>
+    <div class="tbl"><table id="tblSplit"></table></div>
+    <figcaption>
+      <span><b>做了什么</b>按场景划分；每个场景都有 Easy 和 Hard 两种相机运动难度。训练集去掉了 h3_depth 留作回归测试的 16 条轨迹（8 个场景各 2 条）。</span>
+      <span><b>怎么看</b>窗口数 = 每条轨迹上能取的 22 帧连续片段数（帧间隔为 1 时）。场景之间帧数差别很大，按窗口均匀采样时 neighborhood 占比最高。</span>
+      <span><b>结论</b>训练集 11 个场景、238 条轨迹、184,118 帧；验证集 2 个场景、25 条轨迹、17,220 帧。</span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">各训练场景的轨迹数与帧数</div>
+    <div class="tbl"><table id="tblScenes"></table></div>
+  </figure>
+  <dl class="block">
+    <dt>样本</dt><dd>每个样本是一段 22 帧（H3 的 VAE 要求 17n + 5 帧）。阶段 B 每次随机抽一条轨迹上的一个起点（按窗口数均匀），帧间隔随机取 1 或 2；间隔 2 时 22 帧跨 43 帧，相机运动更大。</dd>
+    <dt>分辨率</dt><dd>原始 640×480 等比缩小到 512×384（0.8 倍）；RGB 用面积插值，深度用最近邻插值（与 VGGT-Ω 相同）；内参按像素中心约定同步缩放。</dd>
+    <dt>深度</dt><dd>TartanAir 的 z 深度（米）。有效范围 0.05–200 m：天空在 TartanAir 中记为几千到 6.5 万米的占位值，用 200 m 上限去掉。</dd>
+    <dt>位姿</dt><dd>TartanAir 位姿是 NED 坐标系下的机体位姿（x 前、y 右、z 下），转换为 OpenCV 约定的相机外参（x 右、y 下、z 前，camera-from-world）。CPU 重投影检查的中位相对误差 0.1–0.5%。</dd>
+    <dt>评估集</dt><dd>阶段 A：of1（1 段）、of8（8 个训练场景各 1 段）、val2（2 个验证场景各 1 段）。阶段 B：固定的 16 个训练窗口 + 32 个验证窗口，在所有不重叠窗口中均匀抽取，覆盖两个验证场景的 Easy 和 Hard。</dd>
+  </dl>
+</section>
+
+<section id="checks">
+  <h2>上线前核对</h2>
+  <div class="prose"><p>长时间训练之前，先确认数据约定、教师权重、代码改动都是对的。</p></div>
+  <figure>
+    <div class="fig-title">教师（冻结的 VGGT-Ω）在我们的数据上的表现</div>
+    <div class="tbl"><table id="tblTeacher"></table></div>
+    <figcaption>
+      <span><b>做了什么</b>把官方 1B-512 权重原样加载，在我们的 TartanAir 片段上直接推理，用和训练完全相同的真值归一化来打分。</span>
+      <span><b>怎么看</b>如果我们的位姿、内参或深度约定和 VGGT-Ω 不一致，旋转误差会明显偏大。原始尺度 AbsRel 反映教师的尺度和我们归一化后的真值是否一致。</span>
+      <span><b>结论</b>旋转误差约 0.2°、两两相对旋转全部在 5° 以内，说明数据约定正确、权重加载正确。逐帧对齐后的深度误差在室内段很低。教师的原始尺度和我们归一化后的真值不一致（室内段也存在，是教师在 TartanAir V1 上的整体尺度估计），所以蒸馏只约束与尺度无关的量。户外段（seasonsforest、amusement、neighborhood）教师也明显变差，见“户外片段排查”。</span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">代码审查与等价性检查</div>
+    <div class="tbl"><table>
+      <tr><th>项目</th><th>做法</th><th>结果</th></tr>
+      <tr><td>多智能体代码审查</td><td style="text-align:left;white-space:normal">5 个维度（数据、H3 主干、几何分支、损失与指标、训练循环），每条中高危问题再由独立审查者尝试反驳</td><td style="text-align:left;white-space:normal">无高危问题；修复了教师评估只覆盖第一批、蒸馏权重为 0 后仍运行教师、四元数正负号、多余显存拷贝等</td></tr>
+      <tr><td>预计算 AdaLN 调制</td><td style="text-align:left;white-space:normal">时间步固定为 1，每层的调制参数是常数，提前算好并释放 13B 参数的投影层</td><td style="text-align:left;white-space:normal" id="cellAdaln"></td></tr>
+      <tr><td>VAE 跳过补帧</td><td style="text-align:left;white-space:normal">官方编码会把 22 帧补到 34 帧再丢掉补出来的 3 个潜帧；直接编码最后 5 帧得到同样结果</td><td style="text-align:left;white-space:normal" id="cellVae"></td></tr>
+      <tr><td>断点续训</td><td style="text-align:left;white-space:normal">第 30 步存盘后重新启动</td><td style="text-align:left;white-space:normal">从第 30 步继续到第 34 步，batch 和优化器状态正确恢复</td></tr>
+    </table></div>
+    <figcaption>
+      <span><b>结论</b>两项提速 / 省显存的改动与原始计算等价，省下大量显存，使阶段 B 的 batch 能从 2 提到 7。</span>
+    </figcaption>
+  </figure>
+</section>
+
+<section id="stageA">
+  <h2>阶段 A：过拟合验证</h2>
+  <dl class="block">
+    <dt>为什么做</dt><dd>先确认这套结构能把少量片段“背下来”。如果连几段都学不会，上全量数据只会浪费一天的 GPU。</dd>
+    <dt>怎么做的</dt><dd>三个运行，batch 1，同一套损失和教师蒸馏。A1：1 段、DiT 冻结、500 步。A2：8 个场景各 1 段、DiT 冻结、1500 步。A3：同 A2，再给 DiT 加 LoRA（低秩微调）。另用 2 段没见过的验证片段看泛化。通过标准：训练段深度 AbsRel &lt; 0.03 且相机旋转误差 &lt; 1°。</dd>
+    <dt>结论</dt><dd id="stageAConclusion"></dd>
+  </dl>
+
+  <figure>
+    <div class="fig-title">A1：单段过拟合曲线</div>
+    <div class="charts"><div class="chart" id="chA1depth"></div><div class="chart" id="chA1rot"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>只用 1 段（abandonedfactory）训练 500 步，每 100 步评估一次。</span>
+      <span><b>怎么看</b>纵轴是对数刻度。实线是训练段，虚线是没见过的验证段；灰色水平线是教师和常数深度在同一段上的水平。</span>
+      <span><b>结论</b>训练段深度误差从 1.84 降到 0.028（原始尺度，不做任何缩放），旋转误差降到 0.38°，接近教师。验证段几乎不动，这是只看 1 段的正常结果。</span>
+    </figcaption>
+  </figure>
+
+  <figure>
+    <div class="fig-title">A1：训练前后的深度（训练段 abandonedfactory）</div>
+    <div class="imgs" id="imgsA1"></div>
+    <figcaption>
+      <span><b>怎么看</b>每张图三行是第 0、10、21 帧；三列依次是真值、预测、相对误差（亮色 = 误差大，满刻度 20%）。</span>
+      <span><b>结论</b>500 步后结构基本正确，误差集中在物体边缘，边缘偏糊。一个 DiT token 覆盖 32×32 像素 × 4 帧，细节受读出分辨率限制。</span>
+    </figcaption>
+  </figure>
+
+  <figure>
+    <div class="fig-title">A2 / A3：8 段过拟合，DiT 冻结 vs 加 LoRA</div>
+    <div class="charts"><div class="chart" id="chA23depth"></div><div class="chart" id="chA23rot"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>8 个不同场景各 1 段，训练 1500 步，每 250 步评估训练 8 段和验证 2 段。</span>
+      <span><b>怎么看</b>蓝色是 DiT 冻结（A2），橙色是加 LoRA（A3）。左图实线是训练 8 段的原始尺度 AbsRel，虚线是验证 2 段的逐帧对齐 AbsRel。</span>
+      <span><b>结论</b>两者在训练段上都还在下降，1500 步没到 0.03 的标准；LoRA 在训练段小幅更好，在没见过的验证段明显更好。</span>
+    </figcaption>
+  </figure>
+
+  <figure>
+    <div class="fig-title">逐段结果（第 1500 步）</div>
+    <div class="tbl"><table id="tblClips"></table></div>
+    <figcaption>
+      <span><b>做了什么</b>列出 8 个训练段和 2 个验证段各自的误差，并附上教师在同一段上的结果。</span>
+      <span><b>怎么看</b>深度为原始尺度 AbsRel，绿色加粗为 A2 / A3 中较好的一个；教师一列是逐帧对齐后的 AbsRel（教师尺度不同，只能比形状）。</span>
+      <span><b>结论</b>室内和大部分户外段已到 0.025–0.087。seasonsforest 和 neighborhood 两段明显偏高，教师在 seasonsforest 上同样失败（0.80）；原因是细碎枝叶与远背景在像素级混杂，见“户外片段排查”。</span>
+    </figcaption>
+  </figure>
+
+  <figure>
+    <div class="fig-title">A3 第 1500 步的深度（左：训练段，右：验证段）</div>
+    <div class="imgs" id="imgsA3"></div>
+    <figcaption>
+      <span><b>怎么看</b>同上：真值 / 预测 / 相对误差，三行为第 0、10、21 帧。</span>
+      <span><b>结论</b>训练段结构清楚；验证段（没见过的场景）大致结构对，但细节和尺度明显差，8 段数据不足以泛化。</span>
+    </figcaption>
+  </figure>
+</section>
+
+<section id="stageB">
+  <h2>阶段 B：TartanAir 全量训练（B1）</h2>
+  <dl class="block">
+    <dt>为什么做</dt><dd>阶段 A 证明结构能学；阶段 B 看在全部训练数据上能否泛化到没见过的场景。</dd>
+    <dt>怎么做的</dt><dd id="stageBHow"></dd>
+    <dt>目前</dt><dd id="stageBNow"></dd>
+  </dl>
+  <div class="progress" aria-hidden="true"><div id="progBar"></div></div>
+
+  <figure>
+    <div class="fig-title">batch 大小的选择（显存探测 + 吞吐实测）</div>
+    <div class="tbl"><table id="tblTp"></table></div>
+    <figcaption>
+      <span><b>做了什么</b>先用真实训练步逐步加大 batch，测显存峰值；再分别测“不开梯度检查点”和“开梯度检查点”两种设置下每段数据的耗时。</span>
+      <span><b>怎么看</b>显存预算 = 可用显存减去少量余量。每段耗时越低越好。</span>
+      <span><b>结论</b>两种设置每段耗时相同（1.38 s），开检查点能放下 batch 7，于是阶段 B 用 batch 7，显存基本占满。其中 VAE 编码占约 35% 的时间。</span>
+    </figcaption>
+  </figure>
+
+  <figure id="fullEvalFig" hidden>
+    <div class="fig-title">最终模型在完整验证集上的结果（769 个窗口）</div>
+    <div class="tbl"><table id="tblFull"></table></div>
+    <div class="tbl" style="margin-top:14px"><table id="tblFullScene"></table></div>
+    <div class="tbl" style="margin-top:14px"><table id="tblFullBins"></table></div>
+    <figcaption>
+      <span><b>做了什么</b>用第 5000 步的权重，在两个验证场景所有轨迹的全部不重叠 22 帧窗口（769 个）上评估；同一批窗口上同时运行教师和常数深度基线。另外按 VGGT-Ω 官方评估代码的协议算一遍（真值 0.1–100 m、截断、逐帧中位数尺度 + 平移对齐；位姿 AUC 以百分数计，平移方向不分正反）。</span>
+      <span><b>怎么看</b>第一张表是总体，第二张按场景和难度拆开，第三张按真值深度区间和是否在深度边缘拆开逐帧对齐后的 AbsRel。</span>
+      <span id="fullEvalConcl"></span>
+    </figcaption>
+  </figure>
+
+  <figure>
+    <div class="fig-title">验证集指标随训练变化</div>
+    <div class="charts"><div class="chart" id="chBdepth"></div><div class="chart" id="chBcam"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>每 457 步在固定的 32 段验证片段（carwelding + endofworld）和 16 段训练片段上评估。</span>
+      <span><b>怎么看</b>左图：深度 AbsRel（实线逐帧对齐、虚线原始尺度）；灰线是常数深度基线和教师。右图：相机旋转误差中位数（越低越好）。</span>
+      <span id="capBconcl"></span>
+    </figcaption>
+  </figure>
+
+  <figure>
+    <div class="fig-title">训练损失（滑动平均）</div>
+    <div class="charts"><div class="chart" id="chBloss"></div><div class="chart" id="chBabs"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>记录每一步的损失，做指数滑动平均（系数 0.97）后画出。</span>
+      <span><b>怎么看</b>左图是深度和相机两项损失；右图是训练 batch 上的深度 AbsRel（原始尺度）。只要持续下降、没有突然跳高就说明训练稳定。</span>
+      <span><b>结论</b>预热（前 457 步）后损失平稳下降，没有出现非有限值或崩溃重启。</span>
+    </figcaption>
+  </figure>
+
+  <figure>
+    <div class="fig-title">验证段深度：训练前 vs 最新评估</div>
+    <div class="imgs" id="imgsB"></div>
+    <figcaption>
+      <span><b>怎么看</b>验证集第一段（carwelding，没见过的场景）；真值 / 预测 / 相对误差，三行为第 0、10、21 帧。</span>
+    </figcaption>
+  </figure>
+</section>
+
+<section id="vis">
+  <h2>可视化结果</h2>
+  <div class="prose"><p>下面是各模型在具体片段上的实际输出：深度图、相机轨迹、以及由<b>模型预测的深度 + 预测的相机</b>融合出来的点云。选择模型和片段即可切换；同一个验证片段可以在不同模型之间对比。</p></div>
+  <div class="viewer" id="viewer">
+    <div class="controls">
+      <label for="selModel">模型</label>
+      <select id="selModel"></select>
+      <label for="selClip">片段</label>
+      <select id="selClip"></select>
+    </div>
+    <div class="vmeta" id="vMeta"></div>
+    <figure class="vfig">
+      <div class="fig-title">深度对比</div>
+      <div class="colhead"><span>RGB</span><span>真值</span><span>我们的预测</span><span>教师</span><span>我们的相对误差</span></div>
+      <img id="vImg" alt="深度对比图">
+      <figcaption>
+        <span><b>怎么看</b>四行依次是第 0、7、14、21 帧。深度按逆深度着色（暖色近、冷色远），三列深度共用同一色标（取自真值的 2–98% 分位）；灰色是天空等无效像素。我们的预测直接显示，不做任何缩放；教师按整段一个比例缩放到真值尺度。最后一列是我们的相对误差，满刻度 30%。</span>
+      </figcaption>
+    </figure>
+    <div class="vrow">
+      <figure class="vfig">
+        <div class="fig-title">相机轨迹（俯视）</div>
+        <div id="vTraj"></div>
+        <figcaption>
+          <span><b>怎么看</b>以第 0 帧相机为原点，从上往下看（横轴向右、纵轴向前），单位是归一化后的场景尺度。圆点是起点。我们的轨迹不做任何对齐；教师只缩放一个比例。</span>
+        </figcaption>
+      </figure>
+      <figure class="vfig">
+        <div class="fig-title">点云（拖动旋转，滚轮缩放）</div>
+        <div class="controls small">
+          <button type="button" data-mode="ours" class="on">我们的预测</button>
+          <button type="button" data-mode="gt">真值</button>
+          <button type="button" data-mode="both">叠加对比</button>
+        </div>
+        <canvas id="vCloud" width="640" height="420" aria-label="点云查看器"></canvas>
+        <figcaption>
+          <span><b>怎么看</b>把 22 帧的深度按各自的相机反投影到第 0 帧坐标系，取真值有效的像素、随机抽 1.2 万个点。“我们的预测”用的是模型预测的深度和预测的相机，不用任何真值；“叠加对比”中橙色是预测、蓝色是真值。两者重合得越好，说明深度和相机越一致。</span>
+        </figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="outdoor">
+  <h2>户外片段排查</h2>
+  <dl class="block">
+    <dt>为什么做</dt><dd>seasonsforest、neighborhood 两段在 A2 / A3 中误差最高，教师在 seasonsforest 上也只有 0.80。怀疑是深度数据处理（例如远处 / 天空深度的截断）与 VGGT-Ω 的做法不一致。</dd>
+    <dt>怎么做的</dt><dd>① 统计每段原始深度的分布；② 把教师的误差按深度区间、是否在深度边缘拆开；③ 查 VGGT-Ω 论文和代码里的深度处理（是否设了最大深度、天空掩码、归一化细节）。</dd>
+    <dt>结论</dt><dd id="outdoorConclusion">
+      <p style="margin-top:0">seasonsforest 的高误差主要来自<b>近处的细碎枝叶</b>：真值把每片叶子、每根枝条都记成近处，叶缝里是几十米外的背景；模型和教师都只能预测平滑的树冠，在“预测远、真值近”的像素上相对误差可达数倍。11% 的像素贡献了 69% 的误差，50–200 m 的远处像素只贡献 1.3%。所以<b>截断远处深度对这一段的 AbsRel 帮助很小</b>。</p>
+      <p>VGGT-Ω 论文没有设全局 max depth；代码支持按数据集设上限，但默认关闭，公开配置里只有 uCo3D 设了 256。他们训练用的是 TartanAir V2 和 TartanGround（不是我们用的 V1），这两个数据集的配置没有公开。真值归一化和我们完全相同（所有有效点到第一帧相机的平均距离）。在这几段上，把上限从 200 m 降到 80 m 只会让 seasonsforest、neighborhood 的平均深度变化 5–9%；只有 westerndesert 这种空旷场景变化明显（45%）。教师的原始尺度偏差在室内段同样存在，所以<b>不是</b>远处深度造成的。</p>
+      <p>按你的决定：B1 不动，继续训练；深度上限作为消融 X3（见“消融实验计划”）。另外补一套与 VGGT-Ω 一致的评估指标（0.1–100 m，逐帧中位数尺度 + 平移对齐），并同时报告中位数相对误差，避免少数像素主导平均值。</p>
+    </dd>
+  </dl>
+  <figure>
+    <div class="fig-title">每段原始深度分布（TartanAir 原始 640×480，22 帧）</div>
+    <div class="tbl"><table id="tblDepthStats"></table></div>
+    <figcaption>
+      <span><b>做了什么</b>读取每段 22 帧的原始深度文件，统计分位数和超过各阈值的像素比例。</span>
+      <span><b>怎么看</b>TartanAir 把天空记成几千到 6.5 万米的占位值；“&gt; 200 m”基本就是天空比例。我们的训练只使用 0.05–200 m 的像素。</span>
+      <span><b>结论</b>户外段天空占比很高（westerndesert 49%、seasonsforest 24%），已被 200 m 上限排除；但 seasonsforest 还有大量 50–200 m 的远处植被（75% 分位 57 m），这部分会进入真值归一化和损失。</span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">教师误差拆分：误差来自哪些像素</div>
+    <div class="tbl"><table>
+      <tr><th>片段</th><th>AbsRel（逐帧对齐）</th><th>中位数相对误差</th><th>相对误差 &gt; 100% 的像素</th><th>这些像素贡献的误差</th><th>深度边缘像素</th><th>边缘贡献的误差</th><th>0–2 m 像素贡献的误差</th><th>50–200 m 像素贡献的误差</th></tr>
+      <tr><td>seasonsforest / P002</td><td class="badv">0.798</td><td>0.225</td><td>11.2%</td><td class="badv">68.7%</td><td>56.2%</td><td class="badv">77.4%</td><td class="badv">53.0%</td><td>1.3%</td></tr>
+      <tr><td>neighborhood / P001</td><td>0.166</td><td>0.100</td><td>1.4%</td><td>24.9%</td><td>9.8%</td><td>29.5%</td><td>39.1%</td><td>2.4%</td></tr>
+      <tr><td>office / P000（室内对照）</td><td>0.012</td><td>0.009</td><td>0.0%</td><td>0.8%</td><td>0.1%</td><td>2.3%</td><td>51.9%</td><td>0%</td></tr>
+    </table></div>
+    <figcaption>
+      <span><b>做了什么</b>在 CPU 上重新运行冻结的教师，逐像素计算逐帧对齐后的相对误差，再按真值深度区间、是否在深度边缘（3×3 邻域内最大 / 最小深度之比 &gt; 1.5）拆分误差来源。</span>
+      <span><b>怎么看</b>“贡献的误差”是该类像素的误差之和占总误差的比例。如果远处深度是主因，50–200 m 那一列应该很大。</span>
+      <span><b>结论</b>seasonsforest 一半以上的像素位于深度边缘，贡献了 77% 的误差；近处 0–2 m 的像素贡献 53%；远处只贡献 1.3%。neighborhood 的误差分布更均匀（中位数 0.10），边缘也占约三成。问题核心是细碎前景和远背景在像素级混杂，而不是远处深度本身。</span>
+    </figcaption>
+  </figure>
+
+  <figure>
+    <div class="fig-title">教师在户外段上的逐像素误差</div>
+    <div class="imgs" id="imgsTeacher" style="grid-template-columns:1fr"></div>
+    <figcaption>
+      <span><b>怎么看</b>四列依次是 RGB、真值深度（灰色为天空等无效像素）、教师预测（逐帧对齐后）、相对误差（亮色 = 误差大，满刻度 100%）；三行是第 0、11、21 帧。</span>
+      <span><b>结论</b>真值精确到每片树叶，教师只给出平滑的树冠团块，误差沿枝叶分布。室内段 office 几乎没有误差。论文附录也把“细结构”列为合成数据中的已知歧义。</span>
+    </figcaption>
+  </figure>
+
+  <figure>
+    <div class="fig-title">VGGT-Ω 的深度处理 vs 我们</div>
+    <div class="tbl"><table>
+      <tr><th>环节</th><th>VGGT-Ω</th><th>我们（B1）</th><th>影响</th></tr>
+      <tr><td>最大深度</td><td style="text-align:left;white-space:normal">论文未设全局上限；代码可按数据集设 max_depth（超过置为无效），默认关闭，公开配置仅 uCo3D = 256</td><td style="text-align:left;white-space:normal">200 m（主要用来去掉天空占位值）</td><td style="text-align:left;white-space:normal">TartanAir V2 的设置未公开，无法确认他们用了多少</td></tr>
+      <tr><td>天空</td><td style="text-align:left;white-space:normal">论文说天空深度“没有良好定义”，试过预测无效区域的分支后去掉；按数据转换规范（占位值存为 0）推断天空为无效</td><td style="text-align:left;white-space:normal">&gt; 200 m 即无效，等价于去掉天空</td><td style="text-align:left;white-space:normal">一致（若保留天空占位值，归一化尺度会被放大几十到几百倍）</td></tr>
+      <tr><td>有效像素</td><td style="text-align:left;white-space:normal">深度 &gt; 0.001</td><td style="text-align:left;white-space:normal">0.05–200 m</td><td style="text-align:left;white-space:normal">最小值无实际差别</td></tr>
+      <tr><td>深度缩放</td><td style="text-align:left;white-space:normal">最近邻插值</td><td style="text-align:left;white-space:normal">最近邻插值</td><td style="text-align:left;white-space:normal">一致</td></tr>
+      <tr><td>真值尺度归一化</td><td style="text-align:left;white-space:normal">所有有效点到第一帧相机距离的平均值，无截断</td><td style="text-align:left;white-space:normal">同一份代码</td><td style="text-align:left;white-space:normal">一致。上限 200 m → 80 m 时，seasonsforest / neighborhood 的平均深度只变 5–9%，westerndesert 变 45%</td></tr>
+      <tr><td>边缘过滤 / 分位数截断</td><td style="text-align:left;white-space:normal">代码支持，默认关闭</td><td style="text-align:left;white-space:normal">无</td><td style="text-align:left;white-space:normal">一致</td></tr>
+      <tr><td>训练数据中的 TartanAir</td><td style="text-align:left;white-space:normal">TartanAir V2 + TartanGround</td><td style="text-align:left;white-space:normal">TartanAir V1</td><td style="text-align:left;white-space:normal">教师没见过 V1 的这些深度文件</td></tr>
+      <tr><td>评估协议</td><td style="text-align:left;white-space:normal">0.1–100 m，预测和真值都截断到该范围，逐帧中位数尺度 + 平移对齐</td><td style="text-align:left;white-space:normal">0.05–200 m，不截断，逐帧中位数尺度对齐</td><td style="text-align:left;white-space:normal">户外数字不能和论文直接比；需要补一套他们的协议</td></tr>
+    </table></div>
+    <figcaption>
+      <span><b>做了什么</b>多智能体并行通读 VGGT-Ω 论文（含附录）和公开代码（数据集、预处理、损失、归一化、评估），再由独立验证者逐条核对出处。</span>
+      <span><b>结论</b>我们的训练数据处理与 VGGT-Ω 公开代码基本一致，户外段的高误差不是 max depth 造成的。真正的差异在评估协议（他们 0.1–100 m、尺度 + 平移对齐），这会让户外数字不可直接比较；上限值和评估协议都放进消融 X3。验证者还更正了第一轮调查的两处推断：远处点并不主导这几段的尺度，教师的尺度偏差在室内同样存在。</span>
+    </figcaption>
+  </figure>
+</section>
+
+<section id="g1">
+  <h2>G1：联合生成 RGB + 深度 + 相机（X2 第一版）</h2>
+  <dl class="block">
+    <dt>为什么做</dt><dd>B1 证明了 H3 的中间特征带有 3D 先验，但 B1 是“看着完整视频估计深度和相机”的感知任务，不是生成。G1 把几何放进 H3 的生成过程：推理时只给一张图，模型同时生成 RGB 视频、每帧深度和每帧相机，三者可以直接反投影成 4D（动态）点云。</dd>
+    <dt>和 B1 的区别</dt><dd>不用 VGGT-Ω 教师，也不用 B1 的权重，从 H3 原始权重开始；按生成模型训练（flow matching，从噪声生成）；第一版只用 latent 空间的 flow matching 损失，深度复用 RGB 的 VAE 编码和解码。第二版计划加回归损失，并把深度解码换成 B1 里的 VGGT-Ω DPT 头。</dd>
+    <dt>状态</dt><dd id="g1Status"><span class="pending">准备中。</span></dd>
+  </dl>
+
+  <h3>表示方法：三路数据都放在 H3 的 latent 网格上</h3>
+  <div class="tbl"><table>
+    <tr><th>数据</th><th>编码</th><th>解码</th><th>说明</th></tr>
+    <tr><td>RGB</td><td style="text-align:left;white-space:normal">H3 VAE（24 通道）</td><td style="text-align:left;white-space:normal">H3 VAE 解码器</td><td style="text-align:left;white-space:normal">与 H3 原生完全一致</td></tr>
+    <tr><td>深度</td><td style="text-align:left;white-space:normal">场景归一化（与 B1 相同：第 0 帧为原点、有效点平均距离为 1）后取对数，映射到 [0, 1]（范围 0.05–20，天空记为最远），复制成 3 通道，用 <b>同一个 RGB VAE</b> 编码，再按深度自己的训练统计量逐通道标准化</td><td style="text-align:left;white-space:normal">RGB VAE 解码 → 取 3 通道平均 → 反映射回深度</td><td style="text-align:left;white-space:normal">VAE 往返本身的误差 AbsRel 0.030（第一版深度精度的上限）</td></tr>
+    <tr><td>相机</td><td style="text-align:left;white-space:normal">raymap：每帧每 16×16 像素一条光线，6 维（方向 + Plücker 矩，第 0 帧相机坐标系），同一潜帧的 4 帧按通道叠放，按训练统计量逐通道标准化（零均值、单位方差）</td><td style="text-align:left;white-space:normal">每帧 768 条光线：最小二乘求相机中心，DLT + RQ 分解求旋转和内参</td><td style="text-align:left;white-space:normal">由真值光线恢复相机的误差约 1e-6（精确）</td></tr>
+  </table></div>
+  <dl class="block">
+    <dt>三路排布</dt><dd>RGB、深度、raymap 各自是一组 token，按 [文本 | 首帧关键帧 | RGB | 深度 | raymap] 排成一个序列（序列长度约为 H3 的 3 倍），共享同一个 DiT。深度 / raymap token 与对应的 RGB token 使用相同的位置编码，各自再加一个可学习的模态向量（初始为 0）用于区分。</dd>
+    <dt>复制 RGB 分支</dt><dd>深度和 raymap 的输入投影、输出投影都直接复制 H3 的 RGB 投影，而不是零初始化：两个新分支从第 0 步起就用 RGB 的先验处理自己的输入，再在训练中被微调到深度 / 相机模态。测试显示初始化时它们对自己带噪输入的敏感度 κ 已接近 1（第一次尝试接近 0）。</dd>
+    <dt>保留 RGB 分支</dt><dd>两处保证。① 注意力是单向的：RGB 部分（文本、关键帧、RGB）只在自己内部做注意力；深度 / raymap token 可以看到所有 token。② LoRA 只作用于深度 / raymap token，RGB 部分始终走 H3 的原权重（第一次过拟合时 LoRA 也作用于 RGB token，结果几何损失把首帧条件改坏了，见下方“过拟合验证”）。测试显示加入深度 / raymap token、并给 LoRA 随机权重后，RGB 的输出与 H3 官方前向逐位一致。双向注意力记为消融 X8。</dd>
+    <dt>单图条件</dt><dd>沿用 H3 原生的首帧关键帧机制：首帧单独编码、加噪到 t = 0.999，放在生成序列前面。推理时只需要一张图。</dd>
+    <dt>重建模式</dt><dd>训练时 20% 的样本给出全部 RGB 帧，这些 RGB token 使用关键帧的时间步 0.999（与 H3 处理干净条件的方式一致），只生成深度和相机。用途是在验证集上直接对真值评估、并与 B1 对比。</dd>
+    <dt>损失</dt><dd>三路的 flow matching 速度均方误差：目标 v = x0 − 噪声（与 H3 的约定一致，t = 1 为干净）。重建模式下不计 RGB 项。三路权重均为 1。</dd>
+    <dt>可训练</dt><dd>DiT 上的 LoRA（秩 64，注意力 q/k/v/o + FFN，3.3 亿参数，只作用于深度 / raymap token）、深度 / raymap 的输入输出投影（复制得到）和两个模态向量；H3 主干和 VAE 冻结。</dd>
+  </dl>
+
+  <h3>训练流程</h3>
+  <div class="prose"><p>① 数据：每个训练片段的三路数据各自变成 H3 latent 网格，标准化后各自成为一组 token，加噪。</p></div>
+  <div class="flow" role="img" aria-label="G1 数据流：TartanAir 片段的 RGB、深度、相机分别编码，按通道拼接后加噪">
+    <div class="node frozen"><b>TartanAir 22 帧片段</b>RGB、深度、相机真值</div><div class="arrow">→</div>
+    <div class="node frozen"><b>RGB → H3 VAE</b>深度 → 对数图 → VAE<br>相机 → raymap 打包</div><div class="arrow">→</div>
+    <div class="node frozen"><b>patchify，三组 token</b>RGB · 深度 · raymap 各 1344 个</div><div class="arrow">→</div>
+    <div class="node frozen"><b>加噪</b>x_t = t·x0 + (1 − t)·ε，三路共用 t</div>
+  </div>
+  <div class="prose"><p>② 前向与损失：首帧关键帧、RGB、深度、raymap 四组 token 一起进入 H3 DiT（RGB 部分单向注意力），各自用自己的输出投影得到速度，与 x0 − ε 做均方误差。</p></div>
+  <div class="flow" role="img" aria-label="G1 前向与损失：关键帧行和带噪目标行进入 H3 DiT 加 LoRA，输出三路速度，计算均方误差">
+    <div class="node frozen"><b>首帧关键帧行</b>单帧编码，t = 0.999</div><div class="arrow">+</div>
+    <div class="node frozen"><b>带噪 token</b>RGB、深度、raymap，时间步 t</div><div class="arrow">→</div>
+    <div class="node train"><b>H3 DiT + LoRA r64</b>LoRA 只作用于深度 / raymap token；RGB 只看自己</div><div class="arrow">→</div>
+    <div class="node train"><b>v_RGB · v_深度 · v_相机</b>数据方向的速度</div><div class="arrow">→</div>
+    <div class="node train"><b>损失 = Σ MSE(v, x0 − ε)</b>重建模式不计 RGB</div>
+  </div>
+  <div class="prose"><p>③ 推理：只给第 0 帧；三路从纯噪声开始，按 H3 的 Euler 规则走 30 步；VAE 解码出 RGB 和深度，从 raymap 拟合每帧相机，再反投影成 4D 点云。</p></div>
+
+  <h3>上线前检查</h3>
+  <div class="tbl"><table id="tblG1Test"></table></div>
+
+  <h3>过拟合验证（8 个训练片段，batch 8，每 100 步评估）</h3>
+  <div class="prose"><p>全量训练之前，先在固定的 8 个训练片段上训练，确认三件事：① RGB 分支保持 H3 的能力（单图生成第 0 帧 PSNR 不下降）；② 深度 / raymap 分支读得到自己的带噪输入（κ ≈ 1），损失持续下降；③ 采样出来的深度和相机往真值方向走。评估用的就是这 8 个训练片段。预设的通过门槛是：重建模式深度 AbsRel &lt; 0.5、旋转误差 &lt; 20°、PSNR 不低于第 0 步。</p></div>
+  <figure>
+    <div class="fig-title">两次过拟合的评估结果</div>
+    <div class="tbl"><table>
+      <tr><th>步</th><th colspan="2" style="text-align:center">单图生成</th><th colspan="4" style="text-align:center">重建模式（对真值）</th></tr>
+      <tr><th></th><th>第 0 帧 PSNR</th><th>第 0 帧深度 AbsRel</th><th>深度 AbsRel</th><th>旋转误差</th><th>平移方向误差</th><th>κ 深度 / 相机</th></tr>
+      <tr class="sep"><td colspan="7" style="text-align:left;font-weight:600">第一次：LoRA 作用于全部 token</td></tr>
+      <tr><td>0</td><td>30.00</td><td>0.919</td><td>1.686</td><td>127.3°</td><td>90.4°</td><td>0.90 / 0.93</td></tr>
+      <tr><td>100</td><td class="badv">15.61</td><td>0.764</td><td>0.952</td><td>132.5°</td><td>98.0°</td><td>0.94 / 0.99</td></tr>
+      <tr><td>200</td><td class="badv">19.81</td><td>0.689</td><td>0.887</td><td>59.2°</td><td>83.1°</td><td>0.95 / 0.98</td></tr>
+      <tr class="sep"><td colspan="7" style="text-align:left;font-weight:600">第二次：LoRA 只作用于深度 / raymap token</td></tr>
+      <tr><td>0</td><td>30.01</td><td>0.919</td><td>1.782</td><td>127.0°</td><td>87.0°</td><td>0.90 / 0.93</td></tr>
+      <tr><td>100</td><td class="best">30.01</td><td>0.760</td><td>0.963</td><td>130.4°</td><td>86.4°</td><td>0.92 / 0.98</td></tr>
+      <tr><td>200</td><td class="best">30.01</td><td>0.729</td><td>0.940</td><td>73.6°</td><td>85.7°</td><td>0.96 / 0.99</td></tr>
+      <tr><td>300</td><td class="best">30.01</td><td>0.542</td><td class="badv">0.610</td><td class="badv">53.2°</td><td class="badv">81.1°</td><td>0.96 / 0.97</td></tr>
+    </table></div>
+    <figcaption>
+      <span><b>怎么看</b>重建模式的深度 AbsRel 为逐帧尺度对齐后的值；κ 在 t = 0.5 测量。第 0 步是 H3 原始权重加上复制来的投影，深度和相机还没学，只作为起点。平移方向误差 90° 相当于随机。红色为没达到门槛或明显变差的值，绿色为保持住的值。</span>
+      <span><b>第一次</b>深度、相机的损失在下降，但第 0 帧 PSNR 从 30.0 掉到 15.6 / 19.8：LoRA 同时作用于 RGB token，几何损失通过共享的 LoRA 改坏了 H3 的首帧条件（第 0 帧在最高噪声下的 x0 误差从 0.013 升到 0.174）。改为 LoRA 只作用于深度 / raymap token 后重跑。</span>
+      <span><b>第二次</b>PSNR 保持 30.0（RGB 与 H3 一致）；κ 为 0.96 / 0.97；最后 20 步的损失为深度 0.27、相机 0.077。重建模式的深度和旋转在持续改善（1.78 → 0.61，127° → 53°），但 300 步时还没达到门槛，平移方向仍接近随机。</span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">诊断：相机误差出在哪一段噪声（第二次过拟合第 300 步，重建模式，8 段平均）</div>
+    <div class="tbl"><table>
+      <tr><th colspan="4" style="text-align:center">单步预测：真值加噪到 t，模型一步预测干净 raymap</th><th></th><th colspan="4" style="text-align:center">实际采样：从纯噪声走 30 步，沿途的 x0 预测</th></tr>
+      <tr><th>t</th><th>raymap x0 误差</th><th>旋转误差</th><th>平移方向误差</th><th></th><th>t</th><th>raymap x0 误差</th><th>旋转误差</th><th>平移方向误差</th></tr>
+      <tr><td>0.0（纯噪声）</td><td class="badv">0.753</td><td>22.4°</td><td class="badv">80.9°</td><td></td><td>0.00</td><td>0.805</td><td>19.6°</td><td>89.5°</td></tr>
+      <tr><td>0.1</td><td>0.166</td><td>14.0°</td><td>33.3°</td><td></td><td>0.09</td><td>0.714</td><td>18.6°</td><td>75.9°</td></tr>
+      <tr><td>0.3</td><td>0.022</td><td>5.5°</td><td>7.3°</td><td></td><td>0.21</td><td>0.700</td><td>24.7°</td><td>70.7°</td></tr>
+      <tr><td>0.5</td><td class="best">0.008</td><td class="best">3.3°</td><td class="best">4.3°</td><td></td><td>0.35</td><td>0.738</td><td>28.8°</td><td>70.7°</td></tr>
+      <tr><td>0.8</td><td class="best">0.002</td><td class="best">1.3°</td><td class="best">1.9°</td><td></td><td>0.53 → 0.93</td><td>0.759 → 0.768</td><td>32.2° → 35.6°</td><td>69.9° → 70.3°</td></tr>
+    </table></div>
+    <figcaption>
+      <span><b>方法</b>左边：把真值 raymap 加噪到 t（t = 1 为干净），模型一步给出干净 raymap 的估计，再解出相机。右边：正常采样（shift 2），记录每一步的干净 raymap 估计。x0 误差是标准化空间里的均方误差，1 约等于“完全没信息”。</span>
+      <span><b>结论</b>raymap 的解码和整套机制没有问题：只要带噪输入里还留有真值的大致结构（t ≥ 0.3），模型就能把相机修得很准（t = 0.5 时旋转 3.3°、平移方向 4.3°）。问题出在噪声最大的起始段：这时模型只能靠 RGB 推断相机，还推不出来（尤其平移）。而采样的前几步一旦定下一个错误结构，后面的步骤只会在这个结构上细化，不会再纠正，所以整条轨迹上 x0 误差一直停在 0.7–0.8。</span>
+      <span><b>下一步</b>“从 RGB 推出几何”正是 B1 在全量数据上训练了几千步才学会的能力，8 段 × 300 步（约 2,400 个样本，其中重建样本约 480 个）远远不够。由于不是程序错误，按原计划直接进入全量训练；每次评估重点看重建模式的旋转、平移方向误差。如果 2,000 步后平移方向误差仍接近 90°，就把重建样本比例从 20% 提高到 50%。</span>
+    </figcaption>
+  </figure>
+  <div class="imgs">
+    <div><img src="g1vis_of8b/step300_i2v_office_Easy_P000_50.jpg" alt="过拟合第 300 步单图生成" loading="lazy"><div class="cap">第二次过拟合第 300 步，单图生成（office）：生成的 RGB / 生成的深度 / VGGT-Ω 在生成 RGB 上的深度。四行为第 0、7、14、21 帧。生成的深度已经有地面、墙面的大致布局，但还是块状的。</div></div>
+    <div><img src="g1vis_of8b/step300_recon_office_Easy_P000_50.jpg" alt="过拟合第 300 步重建模式" loading="lazy"><div class="cap">同一片段，重建模式：真实 RGB / 真值深度 / 生成的深度 / 相对误差。生成的深度整体偏远（原始尺度 AbsRel 4.6），布局也比单图生成差；重建样本只占训练的 20%，这一模式学得更慢。</div></div>
+  </div>
+
+  <h3>训练配置</h3>
+  <div class="tbl"><table id="tblG1Cfg"></table></div>
+
+  <h3>评估方法（每 1000 步）</h3>
+  <dl class="block">
+    <dt>单图生成</dt><dd>验证集 8 个固定窗口，只给第 0 帧，用 H3 的 Euler 采样 30 步生成 22 帧。指标：① 第 0 帧深度对真值（逐帧对齐 AbsRel）；② 第 0 帧 RGB 的 PSNR；③ <b>几何一致性</b>：把 VGGT-Ω 当作评估工具，在生成的 RGB 上估计深度和相机，再和我们同时生成的深度、相机比较（深度 AbsRel，相机旋转误差、平移方向误差、AUC@30）。一致性越高，说明生成的 RGB、深度、相机越像同一个 3D 场景。VGGT-Ω 不参与训练。</dd>
+    <dt>重建模式</dt><dd>验证集 16 个固定窗口，给出全部 RGB，只生成深度和相机（采样 shift 2），与真值比较（与 B1 相同的指标）。</dd>
+    <dt>输入敏感度 κ</dt><dd>同一片段、同一时间步、换一份噪声，看深度 / raymap 的输出变化多少：κ ≈ 1 表示模型确实在读带噪的输入，≈ 0 表示看不到输入（第一次尝试失败的原因）。在 t = 0.2 / 0.5 / 0.85 各测一次。</dd>
+    <dt>可视化</dt><dd>每次评估保存前 4 个片段的生成结果和点云，见下方查看器。</dd>
+  </dl>
+
+  <h3>训练进展</h3>
+  <div class="progress" aria-hidden="true"><div id="g1Prog"></div></div>
+  <figure>
+    <div class="fig-title">训练损失（滑动平均）</div>
+    <div class="charts"><div class="chart" id="chG1loss"></div><div class="chart" id="chG1i2v"></div></div>
+    <figcaption>
+      <span><b>怎么看</b>左图是三路的 flow matching 损失（越低越好；“看不到输入”的模型下限约为 1）。右图是单图生成的几何一致性：生成的深度 / 相机与 VGGT-Ω 在生成 RGB 上的估计之差，越低越好。</span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">噪声最大一段（t &lt; 0.1）的训练损失</div>
+    <div class="charts"><div class="chart" id="chG1hi"></div></div>
+    <figcaption>
+      <span><b>方法</b>把训练日志里每个样本的损失按时间步分组，只取 t &lt; 0.1（几乎是纯噪声）的样本，每 200 步算一次平均。这一段的深度 / 相机几乎只能从条件信息推出来：单图样本只看得到第 0 帧，重建样本看得到全部干净的 RGB 帧。实线为单图样本，虚线为重建样本；每个点约 20–200 个样本，重建样本少，曲线更抖。</span>
+      <span><b>结论</b>两条深度曲线都在降，而且重建样本（虚线）一直低于单图样本：模型会用干净的 RGB 帮助推断深度。两条相机曲线前 300 步降得很快，之后变缓，而且重建样本并不比单图样本低：相机分支还没有利用 RGB 视频里的运动信息（详见下方“第 1000 步评估与分析”）。训练中只有约 10% 的样本落在 t &lt; 0.1。</span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">各次评估结果</div>
+    <div class="tbl"><table id="tblG1Eval"></table></div>
+    <figcaption>
+      <span><b>怎么看</b>上半部分是单图生成，下半部分是重建模式（对真值，可与 B1 第 5000 步的 0.104 / 1.75° 对比）。第 0 步是训练前的 H3：深度和相机还没有学，指标没有意义，只作为起点。</span>
+      <span id="g1Concl"></span>
+    </figcaption>
+  </figure>
+
+  <h3>第 1000 步评估与分析</h3>
+  <div class="prose"><p>第 1000 步（约 1.2 万个训练片段，9 小时）的结论是：<b>深度在正常学习，相机还没学会从 RGB 里读出来</b>。下面的数字都经过独立复算；“中位数”指 8 / 16 个评估片段的中位数。</p></div>
+  <div class="tbl"><table>
+    <tr><th>分支</th><th>指标</th><th>第 0 步</th><th>第 1000 步</th><th style="text-align:left">说明</th></tr>
+    <tr><td>RGB</td><td>单图生成第 0 帧 PSNR</td><td>28.74</td><td>28.74</td><td style="text-align:left;white-space:normal">RGB 部分不经过 LoRA、也看不到深度 / 相机 token，生成的视频与 H3 完全相同（同一随机种子下逐位一致）</td></tr>
+    <tr class="sep"><td>深度</td><td>重建模式 AbsRel（逐帧对齐）</td><td>0.721</td><td class="best">0.284</td><td style="text-align:left;white-space:normal">δ1 0.27 → 0.62；原始尺度 AbsRel 1.25 → 0.59（尺度还偏）</td></tr>
+    <tr><td></td><td>单图生成第 0 帧 AbsRel</td><td>0.617</td><td class="best">0.418</td><td style="text-align:left;white-space:normal">中位数 0.46 → 0.26；δ1 0.32 → 0.61</td></tr>
+    <tr><td></td><td>单图生成：深度 vs VGGT-Ω（在生成 RGB 上）</td><td>0.726</td><td>1.129</td><td style="text-align:left;white-space:normal">平均值变差是 3 个 endofworld 片段拉高的（5.25 / 1.43 / 1.41）；中位数 0.77 → 0.29，其余 5 段平均 0.66 → 0.19，δ1 0.27 → 0.56</td></tr>
+    <tr class="sep"><td>相机</td><td>重建模式旋转误差</td><td>127.6°</td><td>21.1°</td><td style="text-align:left;white-space:normal">第 0 步等于随机（随机旋转的平均误差约 127°）</td></tr>
+    <tr><td></td><td>重建模式平移方向误差</td><td>93.1°</td><td class="badv">80.3°</td><td style="text-align:left;white-space:normal">随机方向为 90°，基本没学到</td></tr>
+    <tr><td></td><td>重建模式 AUC@30</td><td>0.001</td><td class="badv">0.023</td><td style="text-align:left;white-space:normal">参考：B1 第 914 步在其验证集上为旋转 3.5°、平移方向 12.8°、AUC@30 0.58、深度 0.167（B1 从 VGGT-Ω 预训练的深度 / 相机头开始，并有教师蒸馏；两者验证片段只重合 2 段，在这 2 段上 B1 的相机同样明显更好）</td></tr>
+  </table></div>
+  <dl class="block">
+    <dt>现象</dt><dd>生成的相机中心在帧与帧之间来回跳，而不是沿轨迹移动：8 个可视化片段的轨迹总长是最大位移的 6.7–19 倍（真值约 1 倍）。跳动有 4 帧的周期：一个潜帧里叠放的 4 帧各带一个固定偏移，这个偏移占了跳动的 92%，去掉后轨迹总长缩短 49–81%。剩下的缓慢漂移在重建模式下大致朝真值方向（夹角 12–47°），但幅度只有真值的 1/2–1/13。平移方向误差按全部 231 对帧计算，相邻帧的真实位移（中位数约 0.016）远小于这种跳动（0.05–0.16），所以这项指标会一直停在 90° 附近，直到跳动被压下去。</dd>
+    <dt>证据</dt><dd>把训练损失按时间步分组（上方“噪声最大一段”的图），在 t &lt; 0.05、第 600–1109 步：<b>深度</b>损失在重建样本上比单图样本低 22%（0.41 vs 0.52，p ≈ 0.001），说明模型会用干净的 RGB 推深度；<b>相机</b>损失在重建样本上并不更低（0.58 vs 0.45，置信区间排除了“重建样本好 6% 以上”），说明相机分支还没有在读 RGB。</dd>
+    <dt>原因</dt><dd>
+      <p style="margin-top:0">raymap 这种表示冗余度很高：每帧 768 条光线 × 6 通道，描述的只是约 11 个自由度的相机，而且 TartanAir 的内参固定不变（方向通道 85–91% 的方差就是固定的像素网格）。所以只要带噪的 raymap 里还剩一点信号（t ≥ 0.1），模型靠“把自己的带噪输入投影回相机流形”就能把损失降得很低（t = 0.3–0.7 时只有 0.02–0.03），根本不需要看 RGB。只有噪声最大的约 10% 样本会因为“读 RGB”而得到奖励。</p>
+      <p>采样时恰好相反：相机的整体结构是在最初几步（噪声最大）定下来的，后面的步骤只在这个结构上细化（过拟合阶段的诊断已经看到这一点）。于是生成的相机基本是由初始噪声决定的一个“先验样本”，与画面无关。</p>
+      <p>4 帧周期的来源：raymap 的输入 / 输出投影复制自 RGB，叠放的第 s 帧继承了 RGB latent 第 s 组通道的权重，所以一开始每个槽位就带着不同的偏移；训练到第 1000 步，这个偏移已经变成各片段不同，但还没消失。</p>
+    </dd>
+    <dt>排除程序错误</dt><dd>逐行核对了 raymap 管线：按 H3 VAE 源码，22 帧编码为 17 + 5 两段，潜帧 0–6 分别对应第 {0}、{1–4}、{5–8}、{9–12}、{13–16}、{17}、{18–21} 帧，深度和 raymap 的打包方式与此完全一致，并且与同位置的 RGB token 共享位置编码；训练目标的构造和评估时的解码互为精确逆运算；标准化与槽位无关；采样器与训练使用同一套时间步约定。没有发现错误。</dd>
+    <dt>下一步</dt><dd>
+      <p style="margin-top:0">当前训练继续（深度还在明显变好）。原计划“第 2000 步若平移方向仍约 90° 就把重建样本比例提到 50%”单独做可能不够：重建样本在 t ≥ 0.1 时同样不需要看 RGB。更直接的修正是让相机流多在高噪声下训练：重建样本中，深度 / raymap 的时间步单独采样，并大幅偏向 t ≈ 0（RGB 保持干净），这样“从干净 RGB 推相机”才成为主要的训练信号；同时可以去掉 raymap 槽位间的 RGB 投影继承（例如对 4 个槽位用同一组投影权重）。这两项改动不改变“只用 flow matching 损失”的设定，可以从第 1000 / 2000 步的检查点继续训练。</p>
+      <p>更彻底的方向是换成低维的相机表示（每帧一个相机 token，记为消融 X9）。</p>
+    </dd>
+  </dl>
+
+  <h3>第一次尝试：通道拼接 + 零初始化（已停止，对应消融 X7）</h3>
+  <dl class="block">
+    <dt>做了什么</dt><dd>三路在通道维拼接（每个 token 同时带 RGB、深度、raymap），深度 / raymap 通过两个零初始化的投影加到 RGB 的 embedding 上；时间步取 logit-normal 加 shift 5。batch 30 训练到第 1194 步（约 3.6 万段、14 小时）后停止。</dd>
+    <dt>结果</dt><dd>第 1000 步时 RGB 视频连贯，VGGT-Ω 在生成画面上估计出的深度也很干净；但生成的深度和相机解码出来都是 16×16 的块状噪声（重建模式深度 AbsRel 1.16、旋转误差 23°）。</dd>
+    <dt>原因</dt><dd>
+      <p style="margin-top:0">输入、输出投影同时为零是一个“双零鞍点”：深度损失传到输入投影的梯度与输出投影成正比，起步时为 0，只剩 RGB 损失带来的无关梯度。1000 步后深度输入投影只有 RGB 输入投影的 1.6%（与 Adam 随机游走的大小一致），模型基本看不到带噪的深度输入，只能预测“由 RGB 推出的平均深度”，无法预测噪声。损失因此卡在“看不到输入”的下限（≈ 1 + 条件方差 ≈ 1.16），采样时噪声原样保留。</p>
+      <p>次要原因：训练时间步只有 0.14% 落在 t &gt; 0.8；深度和 raymap 没有按各自统计量标准化（二阶矩约 1.15 和 2）；重建模式下干净的 RGB 被打上了带噪的时间步。</p>
+    </dd>
+    <dt>修正</dt><dd>改为上面的独立 token + 复制 RGB 分支 + 单向注意力；按各自统计量标准化；时间步 50% 沿用 H3 原分布 + 50% 均匀；各参数组独立学习率和梯度裁剪；评估加入 κ。上线前先用 8 段数据做过拟合验证。</dd>
+  </dl>
+  <div class="imgs">
+    <div><img src="g1vis_chan/recon_step1000.jpg" alt="第一次尝试第 1000 步重建模式" loading="lazy"><div class="cap">第一次尝试第 1000 步，重建模式：RGB（输入）/ 真值深度 / 生成的深度 / 误差</div></div>
+    <div><img src="g1vis_chan/i2v_step1000.jpg" alt="第一次尝试第 1000 步单图生成" loading="lazy"><div class="cap">第一次尝试第 1000 步，单图生成：生成的 RGB / 生成的深度 / VGGT-Ω 在生成 RGB 上的深度</div></div>
+  </div>
+
+  <h3>生成结果可视化</h3>
+  <div class="viewer" id="g1viewer">
+    <div class="controls">
+      <label for="g1Step">训练步</label><select id="g1Step"></select>
+      <label for="g1Mode">模式</label><select id="g1Mode"><option value="i2v">单图生成</option><option value="recon">重建模式</option></select>
+      <label for="g1Clip">片段</label><select id="g1Clip"></select>
+    </div>
+    <div class="vmeta" id="g1Meta"></div>
+    <figure class="vfig">
+      <div class="colhead" id="g1Head"></div>
+      <img id="g1Img" alt="G1 生成结果">
+      <figcaption><span id="g1ImgCap"></span></figcaption>
+    </figure>
+    <div class="vrow">
+      <figure class="vfig">
+        <div class="fig-title">生成的相机轨迹（俯视）</div>
+        <div id="g1Traj"></div>
+      </figure>
+      <figure class="vfig">
+        <div class="fig-title">4D 点云（拖动旋转，滚轮缩放）</div>
+        <canvas id="g1Cloud" width="960" height="630" aria-label="生成结果点云"></canvas>
+        <figcaption><span><b>怎么看</b>用生成的深度和生成的相机把 22 帧反投影到第 0 帧坐标系，颜色取自生成的 RGB（重建模式取真实 RGB），随机抽 1.2 万个点。</span></figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="ablations">
+  <h2>消融实验计划</h2>
+  <div class="prose"><p>当前的 B1 是基线：干净读出（t = 1）、读第 12/24/36/49 层、真值 + 教师蒸馏、DiT 加 LoRA、有效深度 0.05–200 m。下面每个消融只改一处，其余与 B1 相同，便于把差异归因到这一处改动。B1 跑完前不启动，避免抢占 GPU。</p></div>
+  <div class="tbl"><table>
+    <tr><th>编号</th><th>消融</th><th>相对 B1 的唯一改动</th><th>要回答的问题</th><th>来源</th></tr>
+    <tr><td>X1</td><td style="text-align:left">只用真值</td><td style="text-align:left;white-space:normal">去掉教师蒸馏（特征对齐、相机 token 对齐、伪标签），不加载教师</td><td style="text-align:left;white-space:normal">蒸馏是否必要；A1 中蒸馏停掉后拟合变快，蒸馏是否拖慢了真值拟合</td><td style="text-align:left">已确定</td></tr>
+    <tr><td>X2</td><td style="text-align:left">联合去噪读出（进行中：G1）</td><td style="text-align:left;white-space:normal">读出时输入加噪的潜变量（随机时间步 t），同时保留 H3 的去噪目标</td><td style="text-align:left;white-space:normal">在真正的生成过程中（潜变量带噪）几何分支还能否工作；与干净读出差多少</td><td style="text-align:left">已确定</td></tr>
+    <tr><td>X3</td><td style="text-align:left">深度范围（max depth）</td><td style="text-align:left;white-space:normal">真值上限 200 m 改为 100 m（或 80 m），其余不变；评估时另外补一套 VGGT-Ω 协议的指标（0.1–100 m，逐帧中位数尺度 + 平移对齐），并按深度区间、深度边缘分别统计</td><td style="text-align:left;white-space:normal">上限对训练是否有影响。预计对 seasonsforest、neighborhood 影响很小（100–200 m 像素只占 0.2–0.5%），对 westerndesert 这类空旷场景较大（7.4%）；同时让我们的数字能与论文对比</td><td style="text-align:left">已确定</td></tr>
+    <tr><td>X4</td><td style="text-align:left">读出层</td><td style="text-align:left;white-space:normal">换读出层组合（例如更浅的 6/12/18/24，或更深的 24/32/40/49）</td><td style="text-align:left;white-space:normal">几何信息在 DiT 哪些层最多</td><td style="text-align:left">建议</td></tr>
+    <tr><td>X5</td><td style="text-align:left">DiT 冻结 vs LoRA（全量）</td><td style="text-align:left;white-space:normal">关掉 LoRA，只训练适配器和头部</td><td style="text-align:left;white-space:normal">阶段 A 只在 8 段上比过，需要在全量数据上确认 LoRA 的收益是否值得 1.7 倍的时间</td><td style="text-align:left">建议</td></tr>
+    <tr><td>X7</td><td style="text-align:left">通道拼接</td><td style="text-align:left;white-space:normal">深度 / raymap 与 RGB 共用一个 token（通道拼接），不再是独立 token；需配合非零初始化</td><td style="text-align:left;white-space:normal">更省算力的排布能否达到同样效果（第一次尝试为零初始化版本，已失败，见 G1 一节）</td><td style="text-align:left">已确定</td></tr>
+    <tr><td>X8</td><td style="text-align:left">双向注意力</td><td style="text-align:left;white-space:normal">RGB token 也能看到深度 / raymap token</td><td style="text-align:left;white-space:normal">几何反过来约束 RGB，能否让生成的视频在几何上更一致；代价是 RGB 不再与 H3 逐位一致</td><td style="text-align:left">建议</td></tr>
+    <tr><td>X9</td><td style="text-align:left">低维相机表示（G1）</td><td style="text-align:left;white-space:normal">相机不用稠密 raymap，改为每帧一个相机 token（四元数 + 平移 + 视场角），仍用 flow matching 生成</td><td style="text-align:left;white-space:normal">raymap 冗余度高，模型可以不看 RGB 只靠自身去噪降低损失（G1 第 1000 步的发现）；低维表示能否迫使相机从 RGB 推出</td><td style="text-align:left">建议</td></tr>
+    <tr><td>X6</td><td style="text-align:left">VAE 解码器特征</td><td style="text-align:left;white-space:normal">额外读取 H3 VAE 解码器中间层的高分辨率特征送入 DPT 头</td><td style="text-align:left;white-space:normal">能否改善边缘偏糊（DiT token 是 32×32 像素 × 4 帧）</td><td style="text-align:left">建议</td></tr>
+  </table></div>
+</section>
+
+<section id="next">
+  <h2>B1 结论与下一步</h2>
+  <dl class="block">
+    <dt>结论</dt><dd>
+      <p style="margin-top:0">在完整验证集（769 个窗口，两个没见过的场景）上，B1 的深度逐帧对齐 AbsRel 为 0.104（原始尺度 0.126，常数深度 0.473），相机旋转误差中位数 1.75°，位姿 AUC@30 为 73%。模型确实学会了深度和相机，并且直接输出正确尺度（原始尺度与对齐后只差约 0.02）。</p>
+      <p>与教师（0.027、0.19°、95%）相比还有明显差距：深度约 4 倍、旋转约 9 倍。差距不只在边缘：深度边缘像素 0.457 对教师 0.328，非边缘像素 0.096 对教师 0.018。carwelding（0.16–0.17）明显比 endofworld（0.07）难。</p>
+      <p>验证曲线仍在下降但已放缓（第 2742 步 0.120 → 第 5000 步 0.105），而且停止时学习率还在峰值的一半左右，没有退火到底，所以这不是这套设置的上限。</p>
+    </dd>
+    <dt>待讨论</dt><dd>
+      <ul style="margin:0;padding-left:1.2em">
+        <li>是否从第 5000 步检查点继续 B1，把学习率完整退火（原计划还有约 4,100 步），以确定当前设置的上限。</li>
+        <li>B2 的设置：是否加大头部学习率、延长蒸馏、或改读出层，来缩小与教师的差距（尤其非边缘区域的 5 倍差距）。</li>
+        <li>消融的先后：X1（只用真值）、X3（深度范围 / 评估协议）改动小，可以先做；X2（联合去噪读出）关系到在生成过程中能否用。</li>
+      </ul>
+    </dd>
+  </dl>
+  <ul class="prose" id="nextList">
+    <li>B1 已按决定在第 5000 步停止；后续训练计划（是否继续 B1、B2 的设置、消融顺序）讨论后再定，目前没有启动新的训练。</li>
+    <li>消融建议优先 X1、X3（改动小，能回答蒸馏和户外段的问题），再 X2。</li>
+    <li>RGB 生成目前完全没有运行过。要验证 RGB 不受影响，需要在 RGB 生成时关闭几何分支的 LoRA（尚未实现），并对比生成质量。</li>
+    <li>速度：VAE 编码占 35% 时间，可以预先缓存潜变量（需要改成固定窗口采样）。</li>
+  </ul>
+</section>
+
+<section id="glossary">
+  <h2>指标说明</h2>
+  <dl class="gloss">
+    <dt>AbsRel</dt><dd>深度绝对相对误差：每个像素 |预测 − 真值| / 真值 的平均，越小越好；0.1 表示平均差 10%。</dd>
+    <dt>原始尺度 / 逐帧对齐 / 整段对齐</dt><dd>原始尺度不做任何缩放，模型必须直接输出正确尺度；逐帧对齐先把每帧预测按中位数缩放到真值再比，只看形状；整段对齐整段只用一个缩放系数。</dd>
+    <dt>δ1</dt><dd>预测和真值之比在 1.25 倍以内的像素比例，越大越好。</dd>
+    <dt>旋转误差</dt><dd>任意两帧之间相对旋转的误差角度，取所有帧对的中位数。</dd>
+    <dt>平移方向误差</dt><dd>任意两帧之间相对平移方向的夹角（不看长度）。</dd>
+    <dt>AUC@30</dt><dd>每对帧取旋转误差和平移方向误差中较大的一个，统计在 1°、2°……30° 阈值下的准确率再平均；0–1，越大越好。</dd>
+    <dt>常数深度基线</dt><dd>每帧都预测同一个值（该帧真值的中位数）。模型必须明显好于它才算学到了东西。</dd>
+    <dt>教师</dt><dd>冻结的 VGGT-Ω 1B-512 在同样帧上的结果，作为参照。</dd>
+    <dt>LoRA</dt><dd>低秩微调：在冻结的大模型注意力层旁边加少量可训练参数（这里 1.6 亿，约占 DiT 的 0.5%）。</dd>
+  </dl>
+</section>
+</div>
+
+<script src="report_data.js"></script>
+<script src="vis/meta.js"></script>
+<script>
+(function () {
+  const R = window.REPORT || {};
+  const $ = (id) => document.getElementById(id);
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const f3 = (x) => (x == null || isNaN(x)) ? "–" : (+x).toFixed(3);
+  const f2 = (x) => (x == null || isNaN(x)) ? "–" : (+x).toFixed(2);
+  const deg = (x) => (x == null || isNaN(x)) ? "–" : (+x).toFixed(2) + "°";
+  const pct = (x) => (x == null || isNaN(x)) ? "–" : (100 * x).toFixed(1) + "%";
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const runs = R.runs || {};
+  const A1 = runs.A1_of1_heads, A2 = runs.A2_of8_heads, A3 = runs.A3_of8_lora, B1 = runs.B1_full_lora;
+  const last = (arr) => arr && arr.length ? arr[arr.length - 1] : null;
+
+  // ---------------------------------------------------------------- line chart (SVG, hover tooltip)
+  function lineChart(el, o) {
+    if (!el) return;
+    const W = 520, H = 280, m = { l: 52, r: 16, t: 14, b: 40 };
+    const pw = W - m.l - m.r, ph = H - m.t - m.b;
+    const all = o.series.flatMap((s) => s.points).concat((o.refs || []).map((r) => [null, r.y]));
+    const xs = o.series.flatMap((s) => s.points.map((p) => p[0]));
+    const x0 = o.xMin != null ? o.xMin : Math.min(...xs), x1 = o.xMax != null ? o.xMax : Math.max(...xs);
+    const ysAll = all.map((p) => p[1]).filter((v) => v != null && isFinite(v) && (!o.log || v > 0));
+    let y0 = o.yMin != null ? o.yMin : Math.min(...ysAll), y1 = o.yMax != null ? o.yMax : Math.max(...ysAll);
+    const tf = o.log ? Math.log10 : (v) => v;
+    if (!o.log) { const pad = (y1 - y0) * 0.06 || 1; y0 = o.yMin != null ? y0 : Math.max(0, y0 - pad); y1 = y1 + pad; }
+    else { y0 = Math.pow(10, Math.floor(Math.log10(y0) * 4) / 4); y1 = Math.pow(10, Math.ceil(Math.log10(y1) * 4) / 4); }
+    const X = (v) => m.l + (x1 === x0 ? 0 : (v - x0) / (x1 - x0)) * pw;
+    const Y = (v) => m.t + ph - (tf(v) - tf(y0)) / (tf(y1) - tf(y0)) * ph;
+    let ticks = [];
+    if (o.log) { for (let e = Math.floor(Math.log10(y0)); e <= Math.ceil(Math.log10(y1)); e++) for (const k of [1, 2, 5]) { const v = k * Math.pow(10, e); if (v >= y0 * 0.999 && v <= y1 * 1.001) ticks.push(v); } }
+    else { const step = niceStep((y1 - y0) / 5); for (let v = Math.ceil(y0 / step) * step; v <= y1 + 1e-9; v += step) ticks.push(+v.toFixed(6)); }
+    const xstep = niceStep((x1 - x0) / 5 || 1); const xt = []; for (let v = Math.ceil(x0 / xstep) * xstep; v <= x1 + 1e-9; v += xstep) xt.push(v);
+    const grid = css("--grid"), ink3 = css("--ink-3"), ref = css("--ref");
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.title || "")}">`;
+    for (const v of ticks) s += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v)}" y2="${Y(v)}" stroke="${grid}" stroke-width="1"/><text x="${m.l - 6}" y="${Y(v) + 4}" text-anchor="end" font-size="11" fill="${ink3}">${fmtTick(v)}</text>`;
+    for (const v of xt) s += `<text x="${X(v)}" y="${H - m.b + 16}" text-anchor="middle" font-size="11" fill="${ink3}">${v}</text>`;
+    s += `<line x1="${m.l}" x2="${W - m.r}" y1="${m.t + ph}" y2="${m.t + ph}" stroke="${ink3}" stroke-width="1"/>`;
+    s += `<text x="${m.l + pw / 2}" y="${H - 4}" text-anchor="middle" font-size="11" fill="${ink3}">${esc(o.xLabel || "训练步")}</text>`;
+    s += `<text x="12" y="${m.t + ph / 2}" text-anchor="middle" font-size="11" fill="${ink3}" transform="rotate(-90 12 ${m.t + ph / 2})">${esc(o.yLabel || "")}</text>`;
+    for (const r of o.refs || []) { if (r.y < y0 || r.y > y1) continue; s += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(r.y)}" y2="${Y(r.y)}" stroke="${ref}" stroke-width="1.5" stroke-dasharray="2 3"/><text x="${W - m.r - 2}" y="${Y(r.y) - 4}" text-anchor="end" font-size="10.5" fill="${ink3}">${esc(r.label)}</text>`; }
+    for (const se of o.series) {
+      const pts = se.points.filter((p) => p[1] != null && isFinite(p[1]) && (!o.log || p[1] > 0));
+      if (!pts.length) continue;
+      const col = css(se.color);
+      s += `<path d="${pts.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[1]).toFixed(1)).join(" ")}" fill="none" stroke="${col}" stroke-width="2" ${se.dash ? 'stroke-dasharray="6 4"' : ""} stroke-linejoin="round"/>`;
+      if (se.markers !== false && pts.length <= 40) for (const p of pts) s += `<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="3.5" fill="${col}" stroke="${css("--surface")}" stroke-width="1.5"/>`;
+    }
+    s += `<line class="hair" x1="0" x2="0" y1="${m.t}" y2="${m.t + ph}" stroke="${ink3}" stroke-width="1" opacity="0"/>`;
+    s += `<rect x="${m.l}" y="${m.t}" width="${pw}" height="${ph}" fill="transparent" class="hit"/></svg>`;
+    el.innerHTML = `<h4>${esc(o.title || "")}</h4>` + s + `<div class="legend">${o.series.map((se) => `<span><i class="${se.dash ? "dash" : ""}" style="border-color:${css(se.color)}"></i>${esc(se.name)}</span>`).join("")}</div>`;
+    const svg = el.querySelector("svg"), hair = svg.querySelector(".hair"), hit = svg.querySelector(".hit");
+    const tip = document.createElement("div"); tip.className = "tip"; tip.hidden = true; el.appendChild(tip);
+    const xsU = [...new Set(xs)].sort((a, b) => a - b);
+    function show(evt) {
+      const pt = svg.createSVGPoint(); pt.x = evt.clientX; pt.y = evt.clientY;
+      const loc = pt.matrixTransform(svg.getScreenCTM().inverse());
+      const xv = x0 + (loc.x - m.l) / pw * (x1 - x0);
+      let best = xsU[0]; for (const v of xsU) if (Math.abs(v - xv) < Math.abs(best - xv)) best = v;
+      hair.setAttribute("x1", X(best)); hair.setAttribute("x2", X(best)); hair.setAttribute("opacity", "0.5");
+      const rows = o.series.map((se) => { const p = nearest(se.points, best); return p && Math.abs(p[0] - best) <= (x1 - x0) * 0.03 + 1e-9 ? `<div><i style="display:inline-block;width:10px;height:2px;background:${css(se.color)};vertical-align:middle;margin-right:6px"></i>${esc(se.name)}：<b>${(o.fmt || f3)(p[1])}</b></div>` : ""; }).join("");
+      tip.innerHTML = `<div style="color:${ink3}">第 ${best} 步</div>` + rows; tip.hidden = !rows;
+      const r = el.getBoundingClientRect(); let left = evt.clientX - r.left + 12; if (left > r.width - 180) left = evt.clientX - r.left - 190;
+      tip.style.left = Math.max(0, left) + "px"; tip.style.top = (evt.clientY - r.top - 10) + "px";
+    }
+    hit.addEventListener("mousemove", show); hit.addEventListener("mouseleave", () => { tip.hidden = true; hair.setAttribute("opacity", "0"); });
+  }
+  function nearest(pts, x) { let b = null; for (const p of pts) if (b == null || Math.abs(p[0] - x) < Math.abs(b[0] - x)) b = p; return b; }
+  function niceStep(raw) { const e = Math.pow(10, Math.floor(Math.log10(raw))); const f = raw / e; return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * e; }
+  function fmtTick(v) { return v >= 100 ? v.toFixed(0) : v >= 1 ? +v.toFixed(2) + "" : +v.toPrecision(2) + ""; }
+  const ev = (run, split, key) => ((run && run.evals[split]) || []).map((e) => [e.step, e[key]]);
+
+  // ---------------------------------------------------------------- header chips + summary
+  const B1done = B1 && B1.done;
+  const totalSteps = B1 ? (B1done ? B1done.step : 5000) : 0, done = B1 ? (B1done ? B1done.step : B1.last_step + 1) : 0;
+  const bVal = B1 ? last(B1.evals.val) : null, bVal0 = B1 ? B1.evals.val[0] : null;
+  $("chips").innerHTML = [
+    `<span class="chip good">阶段 A 已完成</span>`,
+    B1 ? (B1done ? `<span class="chip good">阶段 B（B1）已完成 · 第 ${B1done.step} 步</span>` : `<span class="chip live">阶段 B 进行中 · ${(100 * done / totalSteps).toFixed(1)}%</span>`) : "",
+    R.g1 ? `<span class="chip live">G1 联合生成进行中 · 第 ${(R.g1.last_step + 1).toLocaleString()} / ${((R.g1.args || {}).steps || 10000).toLocaleString()} 步</span>` : "",
+    R.g1 && R.g1.last_time ? `<span class="chip">数据截至 ${esc(R.g1.last_time.replace("T", " "))} UTC</span>` : B1 ? `<span class="chip">数据截至 ${esc(B1.last_time.replace("T", " "))} UTC</span>` : "",].join("");
+  const a1 = A1 ? last(A1.evals.train) : {}, a2 = A2 ? last(A2.evals.train) : {}, a3 = A3 ? last(A3.evals.train) : {};
+  const a2v = A2 ? last(A2.evals.val) : {}, a3v = A3 ? last(A3.evals.val) : {};
+  const cards = [
+    ["F1 · 管线可学", `单段过拟合到 AbsRel ${f3(a1.absrel_raw)}、旋转 ${deg(a1.rot_err_med)}`, `原始尺度（不缩放）就能拟合，说明深度头直接学会了正确尺度；h3_depth 的问题没有重现。`],
+    ["F2 · 8 段未达标但在降", `1500 步后 8 段均值 ${f3(a3.absrel_raw)}（LoRA）/ ${f3(a2.absrel_raw)}（冻结）`, `按“每段被看过的次数”算，拟合速度和单段一致，属于步数不够；6 段已到 0.025–0.087。`],
+    ["F3 · LoRA 有助于泛化", `没见过的验证段 ${f3(a3v.absrel_frame)} vs ${f3(a2v.absrel_frame)}`, `训练段小幅更好、验证段明显更好，阶段 B 采用 LoRA（每步慢约 1.7 倍）。`],
+    ["F4 · 户外段误差来自细碎枝叶", `seasonsforest 上教师也只有 0.80`, `77% 的误差来自深度边缘（树叶 / 枝条与远背景交错），远处 50–200 m 只占 1.3%；max depth 作为消融 X3。`],
+    R.eval_full_B1_5000 ? ["F5 · B1（第 5000 步）完整验证", `769 个验证窗口 AbsRel ${f3(R.eval_full_B1_5000.groups.all.ours.absrel_frame)}，旋转 ${deg(R.eval_full_B1_5000.groups.all.ours.rot_err_med)}`, `教师 ${f3(R.eval_full_B1_5000.groups.all.teacher.absrel_frame)} / ${deg(R.eval_full_B1_5000.groups.all.teacher.rot_err_med)}，常数深度 ${f3(R.eval_full_B1_5000.groups.all.const_absrel_raw)}；训练到第 5000 步，学习率未退火到底。`] :
+    B1 && bVal ? ["F5 · 全量训练稳定下降", `验证 AbsRel ${f3(bVal0.absrel_frame)} → ${f3(bVal.absrel_frame)}（第 ${bVal.step} 步）`, `旋转误差 ${deg(bVal0.rot_err_med)} → ${deg(bVal.rot_err_med)}；常数基线 ${f3(bVal.const_absrel_raw)}，教师 ${f3(bVal.teacher_absrel_frame)}。`] : null,
+    (() => { const G = R.g1, rv = G && G.evals && G.evals.recon || [], r0 = rv[0], r1 = rv[rv.length - 1];
+      return r1 && r1.step > 0 ? ["F6 · G1 联合生成（第 " + r1.step + " 步）", `重建模式深度 AbsRel ${f3(r0.depth_absrel_frame)} → ${f3(r1.depth_absrel_frame)}，相机旋转 ${deg(r1.rot_err_med)}`,
+        `深度在正常学习；相机平移方向误差 ${deg(r1.trans_dir_err_med)}（随机为 90°），相机分支还没学会从 RGB 读运动，原因与修正见 G1 一节。RGB 与 H3 完全一致。`] : null; })(),
+  ].filter(Boolean);
+  $("summaryCards").innerHTML = cards.map(([t, b, p]) => `<div class="finding"><span class="tag">${esc(t)}</span><b>${esc(b)}</b><p>${esc(p)}</p></div>`).join("");
+
+  // ---------------------------------------------------------------- checks
+  const T = R.check_teacher || {};
+  const trow = (name, lab) => T[name] ? `<tr><td>${lab}</td><td>${f3(T[name].absrel_raw)}</td><td>${f3(T[name].absrel_frame)}</td><td>${f3(T[name].d1_frame)}</td><td>${deg(T[name].rot_err_med)}</td><td>${pct(T[name].rra5)}</td><td>${f3(T[name].auc30)}</td></tr>` : "";
+  $("tblTeacher").innerHTML = `<tr><th>片段集合</th><th>AbsRel 原始</th><th>AbsRel 逐帧对齐</th><th>δ1 逐帧对齐</th><th>旋转误差</th><th>旋转 &lt; 5° 比例</th><th>AUC@30</th></tr>` +
+    trow("of8", "阶段 A 的 8 个训练段") + trow("val2", "阶段 A 的 2 个验证段") + trow("val8", "验证集 8 段（均匀抽取）");
+  const CB = R.check_backbone || {};
+  $("cellAdaln").textContent = CB.taps_rel_err ? `4 个读出层输出与原始前向逐位一致（误差 ${CB.taps_rel_err.join(" / ")}）；常驻显存明显降低` : "";
+  $("cellVae").textContent = CB.encode_rel_err != null ? `与官方结果相对误差 ${CB.encode_rel_err.toExponential(1)}（卷积算法差异）；2 段编码 ${f2(CB.encode_sec_2clips_per_clip_official)} s → ${f2(CB.encode_sec_2clips_batched_skip_tail)} s` : "";
+
+  // ---------------------------------------------------------------- stage A
+  $("stageAConclusion").innerHTML = `A1 通过（AbsRel ${f3(a1.absrel_raw)}、旋转 ${deg(a1.rot_err_med)}）。A2 / A3 在 1500 步内没有达到 0.03 的严格标准（8 段均值 ${f3(a2.absrel_raw)} / ${f3(a3.absrel_raw)}），但曲线仍在下降，属于步数不足；两个户外段明显偏高，教师在其中一段同样失败。LoRA 在没见过的验证段上明显更好，阶段 B 采用 LoRA。`;
+  if (A1) {
+    const t = A1.evals.train[0];
+    lineChart($("chA1depth"), { title: "深度 AbsRel（对数刻度）", yLabel: "AbsRel", log: true, series: [
+      { name: "训练段（原始尺度）", color: "--s1", points: ev(A1, "train", "absrel_raw") },
+      { name: "验证段（逐帧对齐）", color: "--s1", dash: true, points: ev(A1, "val", "absrel_frame") }],
+      refs: [{ y: t.teacher_absrel_frame, label: "教师 " + f3(t.teacher_absrel_frame) }, { y: t.const_absrel_raw, label: "常数深度 " + f3(t.const_absrel_raw) }] });
+    lineChart($("chA1rot"), { title: "相机旋转误差中位数（对数刻度）", yLabel: "度", log: true, fmt: deg, series: [
+      { name: "训练段", color: "--s3", points: ev(A1, "train", "rot_err_med") },
+      { name: "验证段", color: "--s3", dash: true, points: ev(A1, "val", "rot_err_med") }],
+      refs: [{ y: t.teacher_rot_err_med, label: "教师 " + deg(t.teacher_rot_err_med) }] });
+  }
+  if (A2 && A3) {
+    lineChart($("chA23depth"), { title: "深度 AbsRel（对数刻度）", yLabel: "AbsRel", log: true, series: [
+      { name: "A2 冻结 · 训练 8 段", color: "--s1", points: ev(A2, "train", "absrel_raw") },
+      { name: "A3 LoRA · 训练 8 段", color: "--s2", points: ev(A3, "train", "absrel_raw") },
+      { name: "A2 冻结 · 验证 2 段", color: "--s1", dash: true, points: ev(A2, "val", "absrel_frame") },
+      { name: "A3 LoRA · 验证 2 段", color: "--s2", dash: true, points: ev(A3, "val", "absrel_frame") }] });
+    lineChart($("chA23rot"), { title: "训练 8 段旋转误差中位数（对数刻度）", yLabel: "度", log: true, fmt: deg, series: [
+      { name: "A2 冻结", color: "--s1", points: ev(A2, "train", "rot_err_med") },
+      { name: "A3 LoRA", color: "--s2", points: ev(A3, "train", "rot_err_med") }],
+      refs: [{ y: A2.evals.train[0].teacher_rot_err_med, label: "教师 " + deg(A2.evals.train[0].teacher_rot_err_med) }] });
+    const by = (run) => Object.fromEntries(run.clips_final.map((c) => [c.split + "|" + c.clip, c]));
+    const c2 = by(A2), c3 = by(A3);
+    const keys = A3.clips_final.map((c) => c.split + "|" + c.clip);
+    let h = `<tr><th>片段</th><th>A2 深度</th><th>A3 深度</th><th>A2 旋转</th><th>A3 旋转</th><th>A3 AUC@30</th><th>教师深度（逐帧对齐）</th><th>常数深度</th></tr>`;
+    let prev = null;
+    for (const k of keys) {
+      const [sp, name] = k.split("|"), x2 = c2[k] || {}, x3 = c3[k];
+      const b2 = x2.absrel_raw <= x3.absrel_raw, r2 = x2.rot_err_med <= x3.rot_err_med;
+      h += `<tr class="${prev && prev !== sp ? "sep" : ""}"><td>${sp === "val" ? "验证 · " : ""}${esc(name.replace("/Easy/", " / "))}</td><td class="${b2 ? "best" : ""}">${f3(x2.absrel_raw)}</td><td class="${!b2 ? "best" : ""}">${f3(x3.absrel_raw)}</td><td class="${r2 ? "best" : ""}">${deg(x2.rot_err_med)}</td><td class="${!r2 ? "best" : ""}">${deg(x3.rot_err_med)}</td><td>${f3(x3.auc30)}</td><td class="${x3.teacher_absrel_frame > 0.15 ? "badv" : ""}">${f3(x3.teacher_absrel_frame)}</td><td>${f3(x3.const_absrel_raw)}</td></tr>`;
+      prev = sp;
+    }
+    $("tblClips").innerHTML = h;
+  }
+  const IM = R.images || {};
+  const img = (k, cap) => IM[k] ? `<div><img src="${IM[k]}" alt="${esc(cap)}" loading="lazy"><div class="cap">${esc(cap)}</div></div>` : "";
+  $("imgsA1").innerHTML = img("A1_train_0", "第 0 步（训练前）") + img("A1_train_500", "第 500 步");
+  $("imgsA3").innerHTML = img("A3_train_1500", "训练段 abandonedfactory") + img("A3_val_1500", "验证段 carwelding（没见过）");
+
+  // ---------------------------------------------------------------- outdoor
+  const DS = R.depth_stats_of8_val2 || {};
+  let dh = `<tr><th>片段</th><th>中位深度</th><th>75% 分位</th><th>95% 分位</th><th>&gt; 80 m</th><th>&gt; 200 m（≈天空）</th><th>&lt; 0.5 m</th><th>训练用像素（0.05–200 m）</th></tr>`;
+  for (const [k, r] of Object.entries(DS)) {
+    const sky = r.frac_gt_200;
+    dh += `<tr><td>${esc(k.replace("/Easy/", " / "))}</td><td>${f2(r.pct.p50)} m</td><td>${f2(r.pct.p75)} m</td><td>${r.pct.p95 > 1000 ? r.pct.p95.toFixed(0) : f2(r.pct.p95)} m</td><td>${pct(r.frac_gt_80)}</td><td class="${sky > 0.1 ? "badv" : ""}">${pct(sky)}</td><td>${pct(r["frac_lt_0.5"])}</td><td>${pct(r["valid_frac_0.05_200"])}</td></tr>`;
+  }
+  $("tblDepthStats").innerHTML = dh;
+  const teacherImgs = [["teacher_err_seasonsforest", "seasonsforest / Easy / P002（训练场景）"], ["teacher_err_neighborhood", "neighborhood / Easy / P001（训练场景）"], ["teacher_err_office", "office / Easy / P000（室内对照）"]];
+  $("imgsTeacher").innerHTML = teacherImgs.map(([k, c]) => img(k, c)).join("");
+
+  // ---------------------------------------------------------------- stage B
+  if (B1) {
+    const sps = B1.sec_per_step, remain = totalSteps - done;
+    $("stageBHow").innerHTML = `LoRA r64 + 适配器 + 两个头；batch ${B1.batch.batch}（显存探测得出）；学习率日程按原计划 ${B1.batch.steps.toLocaleString()} 步（64,000 段）设定，按决定在第 5,000 步停止（约 35,000 段），停止时学习率约为峰值的 52%，没有退火到底；预热 ${B1.batch.warmup} 步后余弦退火到 10%；学习率 适配器 / 相机 query / LoRA 1e-4、预训练头 1e-5；蒸馏在第 ${Math.round(totalSteps / 2).toLocaleString()} 步降为 0；每 ${B1.batch.eval_every} 步评估并保存可续训检查点，崩溃自动续训。`;
+    $("stageBNow").innerHTML = B1done ? `已于第 ${B1done.step.toLocaleString()} 步停止（共看过约 ${(B1done.step * B1.batch.batch).toLocaleString()} 段 22 帧窗口，平均每个训练帧被看过约 ${(B1done.step * B1.batch.batch * 22 / 184118).toFixed(1)} 次）；中途在第 4,570 步检查点处续训一次以便准确停在 5,000 步，没有非有限值或崩溃。` :
+      `第 ${done.toLocaleString()} / ${totalSteps.toLocaleString()} 步（${(100 * done / totalSteps).toFixed(1)}%），每步约 ${f2(sps)} s。按当前速度估计还需约 ${(remain * sps * 0.9 / 3600).toFixed(1)} 小时。`;
+    $("progBar").style.width = (100 * done / totalSteps).toFixed(1) + "%";
+    const tv = B1.evals.val[0];
+    lineChart($("chBdepth"), { title: "验证 32 段深度 AbsRel", yLabel: "AbsRel", log: true, xMin: 0, series: [
+      { name: "逐帧对齐", color: "--s2", points: ev(B1, "val", "absrel_frame") },
+      { name: "原始尺度", color: "--s2", dash: true, points: ev(B1, "val", "absrel_raw") },
+      { name: "训练 16 段（逐帧对齐）", color: "--s1", points: ev(B1, "train", "absrel_frame") }],
+      refs: [{ y: tv.const_absrel_raw, label: "常数深度 " + f3(tv.const_absrel_raw) }, { y: tv.teacher_absrel_frame, label: "教师 " + f3(tv.teacher_absrel_frame) }] });
+    lineChart($("chBcam"), { title: "旋转误差中位数", yLabel: "度", log: true, xMin: 0, fmt: deg, series: [
+      { name: "验证 32 段", color: "--s2", points: ev(B1, "val", "rot_err_med") },
+      { name: "训练 16 段", color: "--s1", points: ev(B1, "train", "rot_err_med") }],
+      refs: [{ y: tv.teacher_rot_err_med, label: "教师 " + deg(tv.teacher_rot_err_med) }] });
+    const cv = B1.curve.filter((r) => r.step >= 20);
+    lineChart($("chBloss"), { title: "损失（滑动平均）", yLabel: "损失", series: [
+      { name: "深度损失", color: "--s1", markers: false, points: cv.map((r) => [r.step, r.loss_depth]) },
+      { name: "相机损失", color: "--s3", markers: false, points: cv.map((r) => [r.step, r.loss_camera]) },
+      { name: "点云损失", color: "--s7", markers: false, points: cv.map((r) => [r.step, r.loss_point]) }] });
+    lineChart($("chBabs"), { title: "训练 batch 深度 AbsRel（原始尺度，滑动平均）", yLabel: "AbsRel", series: [
+      { name: "训练 batch", color: "--s1", markers: false, points: cv.map((r) => [r.step, r.abs_rel]) }] });
+    $("capBconcl").innerHTML = bVal ? `<b>结论</b>第 ${bVal.step} 步：验证集逐帧 AbsRel ${f3(tv.absrel_frame)} → ${f3(bVal.absrel_frame)}，原始尺度 ${f3(tv.absrel_raw)} → ${f3(bVal.absrel_raw)}，旋转误差 ${deg(tv.rot_err_med)} → ${deg(bVal.rot_err_med)}，已明显好于常数深度（${f3(tv.const_absrel_raw)}），离教师（${f3(tv.teacher_absrel_frame)}、${deg(tv.teacher_rot_err_med)}）还有很大距离。训练集与验证集同步下降，暂无过拟合。` : "";
+    const bimgs = Object.keys(IM).filter((k) => k.startsWith("B1_val_")).sort();
+    $("imgsB").innerHTML = (bimgs.length ? img(bimgs[0], "第 0 步") : "") + (bimgs.length > 1 ? img(bimgs[bimgs.length - 1], "第 " + (+bimgs[bimgs.length - 1].replace("B1_val_step", "")) + " 步") : "");
+  }
+  const FE = R.eval_full_B1_5000;
+  if (FE) {
+    $("fullEvalFig").hidden = false;
+    const A = FE.groups.all, o = A.ours, t = A.teacher;
+    const fr = (lab, x, extra) => `<tr><td>${lab}</td><td>${f3(x.absrel_raw)}</td><td>${f3(x.absrel_frame)}</td><td>${f3(x.d1_raw)}</td><td>${f3(x.vggt_absrel)}</td><td>${f3(x.vggt_d1)}</td><td>${deg(x.rot_err_med)}</td><td>${deg(x.trans_dir_err_med)}</td><td>${f3(x.auc30)}</td><td>${f2(x.vggt_auc3)}</td><td>${f2(x.vggt_auc30)}</td></tr>`;
+    $("tblFull").innerHTML = `<tr><th>${A.n} 个窗口</th><th>AbsRel 原始</th><th>AbsRel 逐帧对齐</th><th>δ1 原始</th><th>VGGT 协议 AbsRel</th><th>VGGT 协议 δ1</th><th>旋转误差</th><th>平移方向误差</th><th>AUC@30</th><th>VGGT AUC@3（%）</th><th>VGGT AUC@30（%）</th></tr>` +
+      fr("B1（第 " + FE.step + " 步）", o) + fr("教师 VGGT-Ω", t) + `<tr><td>常数深度</td><td>${f3(A.const_absrel_raw)}</td><td colspan="10" style="text-align:left;color:var(--ink-3)">每帧预测该帧真值的中位数</td></tr>`;
+    let h = `<tr><th>场景 / 难度</th><th>窗口</th><th>B1 AbsRel 逐帧</th><th>教师 AbsRel 逐帧</th><th>B1 VGGT 协议</th><th>教师 VGGT 协议</th><th>B1 旋转</th><th>教师旋转</th><th>B1 AUC@30</th><th>教师 AUC@30</th></tr>`;
+    for (const [k, g] of Object.entries(FE.groups)) { if (k === "all") continue;
+      h += `<tr><td>${esc(k.replace("/", " / "))}</td><td>${g.n}</td><td>${f3(g.ours.absrel_frame)}</td><td>${f3(g.teacher.absrel_frame)}</td><td>${f3(g.ours.vggt_absrel)}</td><td>${f3(g.teacher.vggt_absrel)}</td><td>${deg(g.ours.rot_err_med)}</td><td>${deg(g.teacher.rot_err_med)}</td><td>${f3(g.ours.auc30)}</td><td>${f3(g.teacher.auc30)}</td></tr>`; }
+    $("tblFullScene").innerHTML = h;
+    const BI = FE.bins_frame_absrel, keys = Object.keys(BI.ours);
+    const tot = keys.filter((k) => k !== "edge" && k !== "nonedge").reduce((a, k) => a + BI.ours[k].pixels, 0);
+    $("tblFullBins").innerHTML = `<tr><th>像素类别</th><th>像素占比</th><th>B1 AbsRel 逐帧</th><th>教师 AbsRel 逐帧</th></tr>` +
+      keys.map((k) => `<tr><td>${k === "edge" ? "深度边缘" : k === "nonedge" ? "非边缘" : k + " m"}</td><td>${pct(BI.ours[k].pixels / tot)}</td><td>${f3(BI.ours[k].absrel)}</td><td>${f3(BI.teacher[k].absrel)}</td></tr>`).join("");
+    $("fullEvalConcl").innerHTML = `<b>结论</b>完整验证集上 B1 的逐帧对齐 AbsRel 为 ${f3(o.absrel_frame)}（教师 ${f3(t.absrel_frame)}，常数深度 ${f3(A.const_absrel_raw)}），原始尺度 ${f3(o.absrel_raw)}；旋转误差中位数 ${deg(o.rot_err_med)}（教师 ${deg(t.rot_err_med)}）。按 VGGT-Ω 协议，深度 AbsRel ${f3(o.vggt_absrel)} 对教师 ${f3(t.vggt_absrel)}，位姿 AUC@30 ${f2(o.vggt_auc30)} 对 ${f2(t.vggt_auc30)}。`;
+  }
+  const tp = R.throughput || {};
+  const tpr = (k, lab) => tp[k] ? `<tr><td>${lab}</td><td>${tp[k].batch}</td><td>${tp[k].probes.map((p) => p[0]).join("，")}</td><td>${f2(tp[k].sec_per_step)} s</td><td>${f2(tp[k].sec_per_step / tp[k].batch)} s</td><td>${f2(tp[k].enc_per_step / tp[k].batch)} s</td></tr>` : "";
+  $("tblTp").innerHTML = `<tr><th>设置</th><th>选定 batch</th><th>探测过的 batch</th><th>每步</th><th>每段</th><th>其中 VAE 编码</th></tr>` + tpr("TP_lora_nockpt", "不开梯度检查点") + tpr("TP_lora_ckpt", "开梯度检查点（采用）");
+
+  // ---------------------------------------------------------------- G1 (joint generation)
+  const G1 = R.g1;
+  if (G1) {
+    const A = G1.args || {}, bs = G1.batch;
+    const tot = A.steps || 10000, done = G1.last_step ? G1.last_step + 1 : 0;
+    $("g1Prog").style.width = (100 * done / tot).toFixed(1) + "%";
+    $("g1Status").innerHTML = done ? `训练中：第 ${done.toLocaleString()} / ${tot.toLocaleString()} 步，batch ${bs ? bs.batch : "–"}，每步约 ${f2(G1.sec_per_step)} s（数据截至 ${esc((G1.last_time || "").replace("T", " "))} UTC）。` : "已启动，等待第一次评估。";
+    const T = G1.test, TS = G1.test_seq;
+    if (TS) $("tblG1Test").innerHTML = `<tr><th>检查</th><th>结果</th><th>说明</th></tr>
+      <tr><td>加入深度 / raymap token 后的 RGB 输出 vs H3 官方前向</td><td>最大误差 ${TS.rgb_with_geo_tokens_vs_official_maxabs_and_scale.map((x) => x[0]).join(" / ")}</td><td style="text-align:left;white-space:normal">单向注意力下 RGB 分支与 H3 逐位一致</td></tr>
+      <tr><td>输入敏感度 κ（初始化，深度）</td><td>${[0.2, 0.5, 0.85].map((t) => f2(TS["kappa_init_dep_t" + t])).join(" / ")}</td><td style="text-align:left;white-space:normal">t = 0.2 / 0.5 / 0.85；≈ 1 表示读得到带噪输入（第一次尝试 ≈ 0）</td></tr>
+      <tr><td>输入敏感度 κ（初始化，raymap）</td><td>${[0.2, 0.5, 0.85].map((t) => f2(TS["kappa_init_ray_t" + t])).join(" / ")}</td><td style="text-align:left;white-space:normal">同上</td></tr>
+      <tr><td>初始化时深度的速度损失</td><td>${[0.2, 0.5, 0.85].map((t) => f2(TS["vloss_init_dep_t" + t])).join(" / ")}</td><td style="text-align:left;white-space:normal">t = 0.5 时已低于“看不到输入”的下限 1，说明复制的 RGB 先验直接可用</td></tr>
+      <tr><td>标准化后的二阶矩</td><td>深度 ${f2(TS.dep_stream_second_moment)}，raymap ${f2(TS.ray_stream_second_moment)}</td><td style="text-align:left;white-space:normal">标准化前分别为 ${f2(TS.dep_second_moment_before)} 和约 2（按 ×2 / ×10 缩放后）</td></tr>` +
+      (T ? `<tr><td>raymap → 相机</td><td>外参最大误差 ${T.cam_extr_max_err.toExponential(1)}</td><td style="text-align:left;white-space:normal">从真值光线恢复相机是精确的（含 Hartley 归一化）</td></tr>
+      <tr><td>VAE 往返（深度）</td><td>AbsRel ${f3(T.vae_depth_roundtrip.absrel_raw)}</td><td style="text-align:left;white-space:normal">第一版深度精度的上限（B1 为 0.104）</td></tr>` : "");
+    $("tblG1Cfg").innerHTML = `<tr><th>项目</th><th>设置</th></tr>
+      <tr><td>初始化</td><td style="text-align:left">H3 原始权重（不用 B1、不用教师）；深度 / raymap 投影复制 RGB 投影</td></tr>
+      <tr><td>排布</td><td style="text-align:left">${A.layout === "chan" ? "通道拼接" : "独立 token"}，${A.bidir ? "双向注意力" : "RGB 单向注意力"}</td></tr>
+      <tr><td>可训练</td><td style="text-align:left">LoRA r${A.lora_rank || 64}（注意力 + FFN）+ 深度 / raymap 投影 + 模态向量</td></tr>
+      <tr><td>batch</td><td style="text-align:left">${bs ? bs.batch : "–"}${A.train_preset ? "（过拟合测试）" : "（显存探测得出，占满显存）"}</td></tr>
+      <tr><td>学习率</td><td style="text-align:left">LoRA ${A.lr || 1e-4}，新投影 ${A.lr_geo || 1e-4}（不加权重衰减）；预热 ${A.warmup || 200} 步后保持不变；AdamW（0.9 / 0.999）；每组单独梯度裁剪 ${A.clip_grad || 1}</td></tr>
+      <tr><td>时间步</td><td style="text-align:left">训练：${A.t_dist === "mix" || !A.t_dist ? "50% H3 原分布（logit-normal + shift " + (A.shift || 5) + "）+ 50% 均匀" : A.t_dist}；推理：Euler ${A.sample_steps || 30} 步，单图生成 shift ${A.shift || 5}，重建模式 shift ${A.shift_recon || 2}</td></tr>
+      <tr><td>样本类型</td><td style="text-align:left">单图生成 ${(100 * (1 - (A.p_recon != null ? A.p_recon : 0.2))).toFixed(0)}%，重建 ${(100 * (A.p_recon != null ? A.p_recon : 0.2)).toFixed(0)}%</td></tr>
+      <tr><td>数据</td><td style="text-align:left">${A.train_preset ? "过拟合测试：固定 8 段（" + A.train_preset + "）" : "与 B1 相同：TartanAir 11 个训练场景随机 22 帧窗口（间隔 1 或 2），384×512"}</td></tr>
+      <tr><td>计划长度</td><td style="text-align:left">${tot.toLocaleString()} 步，每 ${A.eval_every || 1000} 步评估并保存</td></tr>`;
+    const ev = G1.evals || {}, iv = ev.i2v || [], rv = ev.recon || [];
+    const cv = (G1.curve || []).filter((r) => r.step >= 10);
+    if (cv.length) lineChart($("chG1loss"), { title: "flow matching 损失", yLabel: "MSE", log: true, series: [
+      { name: "RGB", color: "--s1", markers: false, points: cv.map((r) => [r.step, r.loss_rgb]) },
+      { name: "深度", color: "--s2", markers: false, points: cv.map((r) => [r.step, r.loss_dep]) },
+      { name: "相机（raymap）", color: "--s3", markers: false, points: cv.map((r) => [r.step, r.loss_ray]) }] });
+    if (iv.length) lineChart($("chG1i2v"), { title: "单图生成的几何一致性（对 VGGT-Ω 在生成 RGB 上的估计）", yLabel: "AbsRel / 度", log: true, xMin: 0, series: [
+      { name: "深度 AbsRel", color: "--s2", points: iv.map((e) => [e.step, e.vs_vggt_absrel_frame]) },
+      { name: "旋转误差（度）", color: "--s3", points: iv.map((e) => [e.step, e.vs_vggt_rot_err_med]) },
+      { name: "第 0 帧深度对真值 AbsRel", color: "--s7", dash: true, points: iv.map((e) => [e.step, e.f0_absrel_frame]) }] });
+    const hb = (G1.tbins || []).filter((r) => r.t === "hi");
+    const hser = (mode, key) => hb.filter((r) => r.mode === mode).map((r) => [r.step, r[key]]);
+    if (hb.length) lineChart($("chG1hi"), { title: "t < 0.1 的速度损失", yLabel: "MSE", log: true, xMin: 0, series: [
+      { name: "深度 · 单图", color: "--s2", points: hser("i2v", "dep") },
+      { name: "深度 · 重建", color: "--s2", dash: true, points: hser("recon", "dep") },
+      { name: "相机 · 单图", color: "--s3", points: hser("i2v", "ray") },
+      { name: "相机 · 重建", color: "--s3", dash: true, points: hser("recon", "ray") }] });
+    let h = `<tr><th>步</th><th colspan="5" style="text-align:center">单图生成</th><th colspan="6" style="text-align:center">重建模式（对真值）</th></tr>
+      <tr><th></th><th>第 0 帧深度 AbsRel</th><th>第 0 帧 PSNR</th><th>深度 vs VGGT</th><th>旋转 vs VGGT</th><th>AUC@30 vs VGGT</th><th>深度 AbsRel 原始</th><th>深度 AbsRel 逐帧</th><th>旋转误差</th><th>AUC@30</th><th>κ 深度（t=0.5）</th><th>κ 相机（t=0.5）</th></tr>`;
+    const steps = [...new Set([...iv.map((e) => e.step), ...rv.map((e) => e.step)])].sort((x, y) => x - y);
+    for (const st of steps) {
+      const i = iv.find((e) => e.step === st) || {}, r = rv.find((e) => e.step === st) || {};
+      h += `<tr><td>${st}</td><td>${f3(i.f0_absrel_frame)}</td><td>${f2(i.f0_psnr)}</td><td>${f3(i.vs_vggt_absrel_frame)}</td><td>${deg(i.vs_vggt_rot_err_med)}</td><td>${f3(i.vs_vggt_auc30)}</td><td>${f3(r.depth_absrel_raw)}</td><td>${f3(r.depth_absrel_frame)}</td><td>${deg(r.rot_err_med)}</td><td>${f3(r.auc30)}</td><td>${f2(r["kappa_dep_t0.5"])}</td><td>${f2(r["kappa_ray_t0.5"])}</td></tr>`;
+    }
+    $("tblG1Eval").innerHTML = steps.length ? h : `<tr><td class="pending">等待第一次评估。</td></tr>`;
+    // viewer
+    const V1 = G1.vis || {}, vsteps = Object.keys(V1).sort();
+    const gs = $("g1Step"), gmode = $("g1Mode"), gc = $("g1Clip");
+    if (!vsteps.length) { $("g1viewer").innerHTML = `<p class="pending">等待第一次评估生成可视化结果。</p>`; }
+    else {
+      gs.innerHTML = vsteps.map((d) => `<option value="${d}">第 ${+d.replace("step_", "")} 步</option>`).join("");
+      gs.value = vsteps[vsteps.length - 1];
+      const gclouds = {}; let gcur = null;
+      const gcan = $("g1Cloud"), gctx = gcan.getContext("2d");
+      let gview = { yaw: 0, pitch: 0.45, zoom: 1 };
+      window.__gcloud = (key, d) => {
+        const bin = atob(d.pts), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+        const cb = atob(d.rgb), c = new Uint8Array(cb.length); for (let i = 0; i < cb.length; i++) c[i] = cb.charCodeAt(i);
+        const P = new Int16Array(u.buffer);
+        const med = (a) => { const b = Float64Array.from(a).sort(); return b[b.length >> 1]; };
+        const ax = [0, 1, 2].map((k) => { const v = []; for (let i = 0; i < d.n; i++) v.push(P[3 * i + k] / 32000); return v; });
+        const mid = ax.map(med), mad = Math.max(...ax.map((v, k) => med(v.map((x) => Math.abs(x - mid[k])))), 1e-4);
+        gclouds[key] = { n: d.n, P, rgb: c, mid, scale: 0.45 / mad, centre: d.centre, half: d.half };
+        if (gcur === key) gdraw();
+      };
+      function gdraw() {
+        const C = gclouds[gcur]; if (!C) return;
+        const W = gcan.width, H = gcan.height; gctx.fillStyle = css("--sunk"); gctx.fillRect(0, 0, W, H);
+        const cy = Math.cos(gview.yaw), sy = Math.sin(gview.yaw), cp = Math.cos(gview.pitch), sp = Math.sin(gview.pitch);
+        const f = Math.min(W, H) * 0.9 * gview.zoom, dist = 3.0, items = [];
+        for (let i = 0; i < C.n; i++) {
+          const x = (C.P[3 * i] / 32000 - C.mid[0]) * C.scale, y = -(C.P[3 * i + 1] / 32000 - C.mid[1]) * C.scale, z = (C.P[3 * i + 2] / 32000 - C.mid[2]) * C.scale;
+          const x1 = cy * x + sy * z, z1 = -sy * x + cy * z, y2 = cp * y + sp * z1, z2 = -sp * y + cp * z1;
+          if (z2 + dist <= 0.05) continue; const k = f / (z2 + dist); items.push([z2, W / 2 + x1 * k, H / 2 - y2 * k, i]);
+        }
+        items.sort((a, b) => b[0] - a[0]);
+        for (const [, px, py, i] of items) { gctx.fillStyle = `rgb(${C.rgb[3 * i]},${C.rgb[3 * i + 1]},${C.rgb[3 * i + 2]})`; gctx.fillRect(px - 1.4, py - 1.4, 2.8, 2.8); }
+      }
+      let gdrag = null;
+      gcan.addEventListener("pointerdown", (e) => { gdrag = [e.clientX, e.clientY, gview.yaw, gview.pitch]; gcan.setPointerCapture(e.pointerId); });
+      gcan.addEventListener("pointermove", (e) => { if (!gdrag) return; gview.yaw = gdrag[2] + (e.clientX - gdrag[0]) * 0.01; gview.pitch = Math.max(-1.4, Math.min(1.4, gdrag[3] + (e.clientY - gdrag[1]) * 0.01)); gdraw(); });
+      gcan.addEventListener("pointerup", () => { gdrag = null; });
+      gcan.addEventListener("wheel", (e) => { e.preventDefault(); gview.zoom = Math.max(0.3, Math.min(5, gview.zoom * (e.deltaY > 0 ? 0.9 : 1.1))); gdraw(); }, { passive: false });
+      function gfill() {
+        const list = (V1[gs.value] || {})[gmode.value] || [];
+        const keep = gc.value;
+        gc.innerHTML = list.map((c) => `<option value="${c.id}">${esc(c.clip.replace("/Easy/", " / Easy / ").replace("/Hard/", " / Hard / "))}</option>`).join("");
+        if (list.find((c) => c.id === keep)) gc.value = keep;
+      }
+      function grender() {
+        const list = (V1[gs.value] || {})[gmode.value] || []; const c = list.find((x) => x.id === gc.value); if (!c) return;
+        const i2v = gmode.value === "i2v";
+        $("g1Head").style.setProperty("--cols", i2v ? 3 : 4);
+        $("g1Head").innerHTML = (i2v ? ["生成的 RGB", "生成的深度", "VGGT-Ω 在生成 RGB 上的深度"] : ["真实 RGB（输入）", "真值深度", "生成的深度", "相对误差"]).map((x) => `<span>${x}</span>`).join("");
+        $("g1Img").src = `g1vis/${gs.value}/${gmode.value}_${c.id}.jpg`;
+        $("g1ImgCap").innerHTML = i2v ? `<b>怎么看</b>四行为第 0、7、14、21 帧；只给了第 0 帧，其余全部由模型生成。深度按逆深度着色（暖色近），色标取自生成的深度；第三列用来检查生成的深度是否与生成画面一致。` : `<b>怎么看</b>给出全部 RGB，只生成深度和相机；最后一列是相对误差（满刻度 30%）。`;
+        const rows = Object.entries(c).filter(([k, v]) => typeof v === "number");
+        $("g1Meta").innerHTML = `<table><tr>${rows.map(([k]) => `<th>${esc(k)}</th>`).join("")}</tr><tr>${rows.map(([, v]) => `<td>${f3(v)}</td>`).join("")}</tr></table>`;
+        // trajectory (top view x-z): generated vs GT (GT only meaningful in recon mode)
+        const sets = i2v ? [["gen", "生成", "--s2"]] : [["gt", "真值", "--ink-2"], ["gen", "生成", "--s2"]];
+        const pts = sets.flatMap(([k]) => c.centres[k].map((p) => [p[0], p[2]]));
+        const xs = pts.map((p) => p[0]), zs = pts.map((p) => p[1]);
+        const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs), 1e-3) * 1.15;
+        const cx = (Math.max(...xs) + Math.min(...xs)) / 2, cz = (Math.max(...zs) + Math.min(...zs)) / 2, W = 460, H = 340, sc = (Math.min(W, H) - 60) / span;
+        const X = (v) => W / 2 + (v - cx) * sc, Y = (v) => H / 2 - (v - cz) * sc;
+        let sv = `<svg viewBox="0 0 ${W} ${H}"><rect width="${W}" height="${H}" fill="${css("--sunk")}" rx="6"/>`;
+        for (const [k, , col] of sets) { const P = c.centres[k]; sv += `<path d="${P.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[2]).toFixed(1)).join(" ")}" fill="none" stroke="${css(col)}" stroke-width="2" ${k === "gt" ? 'stroke-dasharray="5 3"' : ""}/><circle cx="${X(P[0][0])}" cy="${Y(P[0][2])}" r="4.5" fill="${css(col)}"/>`; }
+        sv += `</svg><div class="legend">${sets.map(([, lab, col]) => `<span><i class="${lab === "真值" ? "dash" : ""}" style="border-color:${css(col)}"></i>${lab}</span>`).join("")}</div>`;
+        $("g1Traj").innerHTML = sv;
+        gcur = `G1/${+gs.value.replace("step_", "")}/${gmode.value}/${c.id}`;
+        if (gclouds[gcur]) gdraw(); else { gctx.clearRect(0, 0, gcan.width, gcan.height); const sc2 = document.createElement("script"); sc2.src = `g1vis/${gs.value}/${gmode.value}_${c.id}.cloud.js`; document.body.appendChild(sc2); }
+      }
+      gs.addEventListener("change", () => { gfill(); grender(); });
+      gmode.addEventListener("change", () => { gfill(); grender(); });
+      gc.addEventListener("change", grender);
+      gfill(); grender();
+    }
+    const li = iv[iv.length - 1], lr = rv[rv.length - 1];
+    $("g1Concl").innerHTML = li && li.step > 0 ? `<b>目前</b>第 ${li.step} 步：单图生成的深度与 VGGT-Ω 估计的差异 AbsRel ${f3(li.vs_vggt_absrel_frame)}、旋转 ${deg(li.vs_vggt_rot_err_med)}；重建模式深度 AbsRel ${f3(lr && lr.depth_absrel_frame)}、旋转 ${deg(lr && lr.rot_err_med)}。` : "";
+  }
+  // ---------------------------------------------------------------- training data tables
+  const SCENES = {"abandonedfactory":{"Easy":[9,11781],"Hard":[11,8820]},"abandonedfactory_night":{"Easy":[13,14523],"Hard":[14,10158]},"amusement":{"Easy":[6,6181],"Hard":[7,4802]},"hospital":{"Easy":[36,16340],"Hard":[12,5456]},"japanesealley":{"Easy":[5,3359],"Hard":[5,2052]},"neighborhood":{"Easy":[19,24529],"Hard":[17,15648]},"office":{"Easy":[6,8047],"Hard":[7,4677]},"office2":{"Easy":[10,8534],"Hard":[11,7639]},"seasonsforest":{"Easy":[9,3906],"Hard":[4,1428]},"seasonsforest_winter":{"Easy":[10,10304],"Hard":[9,7372]},"westerndesert":{"Easy":[11,5236],"Hard":[7,3326]}};
+  const VALS = {"carwelding":{"Easy":[6,3772],"Hard":[4,2143]},"endofworld":{"Easy":[10,8423],"Hard":[5,2882]}};
+  const tot = (obj) => Object.values(obj).reduce((a, v) => [a[0] + v.Easy[0] + v.Hard[0], a[1] + v.Easy[1] + v.Hard[1]], [0, 0]);
+  const [tt, tf] = tot(SCENES), [vt, vf] = tot(VALS);
+  const n0 = (x) => x.toLocaleString();
+  $("tblSplit").innerHTML = `<tr><th>划分</th><th>场景</th><th>轨迹</th><th>帧</th><th>22 帧窗口（间隔 1）</th><th>用途</th></tr>
+    <tr><td>训练</td><td style="text-align:left;white-space:normal">${Object.keys(SCENES).join("、")}（11 个）</td><td>${tt}</td><td>${n0(tf)}</td><td>${n0(tf - 21 * tt)}</td><td style="text-align:left">训练</td></tr>
+    <tr><td>验证</td><td style="text-align:left">carwelding、endofworld</td><td>${vt}</td><td>${n0(vf)}</td><td>${n0(vf - 21 * vt)}</td><td style="text-align:left">评估、调参</td></tr>
+    <tr><td>预留验证</td><td style="text-align:left">gascola</td><td>17</td><td>23,731</td><td>—</td><td style="text-align:left">未使用</td></tr>
+    <tr><td>测试</td><td style="text-align:left">ocean、oldtown、seasidetown、soulcity</td><td>73</td><td>56,333</td><td>—</td><td style="text-align:left">未使用（最终测试）</td></tr>`;
+  let sh = `<tr><th>场景</th><th>Easy 轨迹</th><th>Easy 帧</th><th>Hard 轨迹</th><th>Hard 帧</th><th>窗口占比（采样概率）</th></tr>`;
+  for (const [k, v] of Object.entries(SCENES)) {
+    const w = v.Easy[1] + v.Hard[1] - 21 * (v.Easy[0] + v.Hard[0]);
+    sh += `<tr><td>${k}</td><td>${v.Easy[0]}</td><td>${n0(v.Easy[1])}</td><td>${v.Hard[0]}</td><td>${n0(v.Hard[1])}</td><td>${(100 * w / (tf - 21 * tt)).toFixed(1)}%</td></tr>`;
+  }
+  $("tblScenes").innerHTML = sh;
+
+  // ---------------------------------------------------------------- visual outputs viewer
+  const VIS = window.VIS;
+  if (!VIS) { $("viewer").innerHTML = `<p class="pending">可视化数据还在生成。</p>`; return; }
+  const MLAB = { A1: "A1 · 单段过拟合 · DiT 冻结", A2: "A2 · 8 段 · DiT 冻结", A3: "A3 · 8 段 · LoRA", B1: "B1 · TartanAir 全量 · LoRA" };
+  const selM = $("selModel"), selC = $("selClip");
+  const models = Object.keys(VIS.models);
+  selM.innerHTML = models.map((m) => `<option value="${m}">${esc(MLAB[m] || m)}${m === "B1" ? `（第 ${VIS.models[m].step} 步）` : ""}</option>`).join("");
+  const clipLabel = (c) => `${c.split === "val" ? "验证" : "训练"} · ${c.clip.replace("/Easy/", " / Easy / ").replace("/Hard/", " / Hard / ")}`;
+  let cur = null, cloudMode = "ours";
+  function fillClips(keep) {
+    const cl = VIS.models[selM.value].clips;
+    selC.innerHTML = cl.map((c) => `<option value="${c.id}">${esc(clipLabel(c))}</option>`).join("");
+    const pref = keep && cl.find((c) => c.id === keep) ? keep : (cl.find((c) => c.split === "val") || cl[0]).id;
+    selC.value = pref;
+  }
+  function render() {
+    const m = selM.value, c = VIS.models[m].clips.find((x) => x.id === selC.value);
+    cur = { m, c };
+    $("vImg").src = `vis/${m}/${c.id}.jpg`;
+    const o = c.ours, t = c.teacher;
+    const row = (lab, x) => `<tr><td>${lab}</td><td>${f3(x.absrel_raw)}</td><td>${f3(x.absrel_frame)}</td><td>${f3(x.d1_raw)}</td><td>${deg(x.rot_err_med)}</td><td>${deg(x.trans_dir_err_med)}</td><td>${f3(x.auc30)}</td></tr>`;
+    $("vMeta").innerHTML = `<table><tr><th>${esc(clipLabel(c))}</th><th>AbsRel 原始</th><th>AbsRel 逐帧对齐</th><th>δ1 原始</th><th>旋转误差</th><th>平移方向误差</th><th>AUC@30</th></tr>${row("我们（" + m + "）", o)}${row("教师", t)}</table>`;
+    drawTraj(c.centres);
+    loadCloud(`${m}/${c.id}`);
+  }
+  selM.addEventListener("change", () => { fillClips(selC.value); render(); });
+  selC.addEventListener("change", render);
+
+  function drawTraj(C) {
+    const W = 460, H = 340, pad = 30;
+    const sets = [["gt", "真值", "--ink-2"], ["ours", "我们", "--s2"], ["teacher", "教师（缩放对齐）", "--s3"]];
+    const pts = sets.flatMap(([k]) => C[k].map((p) => [p[0], p[2]]));
+    let x0 = Math.min(...pts.map((p) => p[0])), x1 = Math.max(...pts.map((p) => p[0]));
+    let z0 = Math.min(...pts.map((p) => p[1])), z1 = Math.max(...pts.map((p) => p[1]));
+    const span = Math.max(x1 - x0, z1 - z0, 1e-3) * 1.1, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+    const sc = Math.min(W - 2 * pad, H - 2 * pad) / span;
+    const X = (v) => W / 2 + (v - cx) * sc, Y = (v) => H / 2 - (v - cz) * sc;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="相机轨迹俯视图">`;
+    s += `<rect x="0" y="0" width="${W}" height="${H}" fill="${css("--sunk")}" rx="6"/>`;
+    const gstep = niceStep(span / 5);
+    for (let v = Math.ceil((cx - span / 2) / gstep) * gstep; v <= cx + span / 2; v += gstep) s += `<line x1="${X(v)}" x2="${X(v)}" y1="0" y2="${H}" stroke="${css("--grid")}"/>`;
+    for (let v = Math.ceil((cz - span / 2) / gstep) * gstep; v <= cz + span / 2; v += gstep) s += `<line y1="${Y(v)}" y2="${Y(v)}" x1="0" x2="${W}" stroke="${css("--grid")}"/>`;
+    for (const [k, , col] of sets) {
+      const P = C[k];
+      s += `<path d="${P.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[2]).toFixed(1)).join(" ")}" fill="none" stroke="${css(col)}" stroke-width="2" ${k === "gt" ? 'stroke-dasharray="5 3"' : ""}/>`;
+      s += `<circle cx="${X(P[0][0])}" cy="${Y(P[0][2])}" r="4.5" fill="${css(col)}" stroke="${css("--surface")}" stroke-width="1.5"/>`;
+    }
+    s += `<text x="${W - 8}" y="${H - 8}" text-anchor="end" font-size="11" fill="${css("--ink-3")}">网格间距 ${+gstep.toPrecision(2)}</text></svg>`;
+    s += `<div class="legend">${sets.map(([, lab, col]) => `<span><i class="${lab === "真值" ? "dash" : ""}" style="border-color:${css(col)}"></i>${lab}</span>`).join("")}</div>`;
+    $("vTraj").innerHTML = s;
+  }
+
+  // point cloud: data files call window.__cloud(key, payload)
+  const clouds = {}, canvas = $("vCloud"), ctx = canvas.getContext("2d");
+  let view = { yaw: 0.0, pitch: 0.45, zoom: 1.0 };
+  const dec16 = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Int16Array(u.buffer); };
+  const dec8 = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; };
+  window.__cloud = (key, d) => {
+    const C = { n: d.n, gt: dec16(d.gt), ours: dec16(d.ours), rgb: dec8(d.rgb), centre: d.centre, half: d.half };
+    // robust framing: centre on the GT median, scale so that the central mass fills the view
+    const med = (a) => { const b = Float64Array.from(a).sort(); return b[b.length >> 1]; };
+    const ax = [0, 1, 2].map((k) => { const v = []; for (let i = 0; i < C.n; i++) v.push(C.gt[3 * i + k] / 32000); return v; });
+    C.mid = ax.map(med);
+    const mad = Math.max(...ax.map((v, k) => med(v.map((x) => Math.abs(x - C.mid[k])))), 1e-4);
+    C.scale = 0.45 / mad;
+    clouds[key] = C; if (cur && key === `${cur.m}/${cur.c.id}`) drawCloud();
+  };
+  function loadCloud(key) {
+    if (clouds[key]) { drawCloud(); return; }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = css("--ink-3"); ctx.font = "14px sans-serif"; ctx.fillText("加载点云……", 20, 30);
+    const sc = document.createElement("script"); sc.src = `vis/${key}.cloud.js`; document.body.appendChild(sc);
+  }
+  function drawCloud() {
+    const key = `${cur.m}/${cur.c.id}`, C = clouds[key]; if (!C) return;
+    const W = canvas.width, H = canvas.height;
+    ctx.fillStyle = css("--sunk"); ctx.fillRect(0, 0, W, H);
+    const cy = Math.cos(view.yaw), sy = Math.sin(view.yaw), cp = Math.cos(view.pitch), sp = Math.sin(view.pitch);
+    const f = Math.min(W, H) * 0.9 * view.zoom, dist = 3.0;
+    const layers = cloudMode === "both" ? [["gt", css("--s1")], ["ours", css("--s2")]] : [[cloudMode, null]];
+    const items = [];
+    for (const [which, col] of layers) {
+      const P = C[which];
+      for (let i = 0; i < C.n; i++) {
+        const x = (P[3 * i] / 32000 - C.mid[0]) * C.scale, y = -(P[3 * i + 1] / 32000 - C.mid[1]) * C.scale, z = (P[3 * i + 2] / 32000 - C.mid[2]) * C.scale;
+        const x1 = cy * x + sy * z, z1 = -sy * x + cy * z;          // yaw about the vertical axis
+        const y2 = cp * y + sp * z1, z2 = -sp * y + cp * z1;        // pitch: look down from above
+        const k = f / (z2 + dist); if (z2 + dist <= 0.05) continue;
+        items.push([z2, W / 2 + x1 * k, H / 2 - y2 * k, col, i]);
+      }
+    }
+    items.sort((a, b) => b[0] - a[0]);
+    for (const [, px, py, col, i] of items) {
+      ctx.fillStyle = col ? col : `rgb(${C.rgb[3 * i]},${C.rgb[3 * i + 1]},${C.rgb[3 * i + 2]})`;
+      ctx.globalAlpha = col ? 0.55 : 1;
+      ctx.fillRect(px - 1.4, py - 1.4, 2.8, 2.8);
+    }
+    ctx.globalAlpha = 1;
+    // camera paths in the same normalized frame
+    const cpath = (P, col) => {
+      ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath();
+      P.forEach((p, j) => {
+        const x = ((p[0] - C.centre[0]) / C.half - C.mid[0]) * C.scale, y = -((p[1] - C.centre[1]) / C.half - C.mid[1]) * C.scale, z = ((p[2] - C.centre[2]) / C.half - C.mid[2]) * C.scale;
+        const x1 = cy * x + sy * z, z1 = -sy * x + cy * z, y2 = cp * y + sp * z1, z2 = -sp * y + cp * z1, k = f / (z2 + dist);
+        j ? ctx.lineTo(W / 2 + x1 * k, H / 2 - y2 * k) : ctx.moveTo(W / 2 + x1 * k, H / 2 - y2 * k);
+      });
+      ctx.stroke();
+    };
+    if (cloudMode !== "ours") cpath(cur.c.centres.gt, css("--ink"));
+    if (cloudMode !== "gt") cpath(cur.c.centres.ours, css("--s2"));
+  }
+  document.querySelectorAll("#viewer button[data-mode]").forEach((b) => b.addEventListener("click", () => {
+    cloudMode = b.dataset.mode;
+    document.querySelectorAll("#viewer button[data-mode]").forEach((x) => x.classList.toggle("on", x === b));
+    drawCloud();
+  }));
+  let drag = null;
+  canvas.addEventListener("pointerdown", (e) => { drag = [e.clientX, e.clientY, view.yaw, view.pitch]; canvas.setPointerCapture(e.pointerId); canvas.style.cursor = "grabbing"; });
+  canvas.addEventListener("pointermove", (e) => { if (!drag) return; view.yaw = drag[2] + (e.clientX - drag[0]) * 0.01; view.pitch = Math.max(-1.4, Math.min(1.4, drag[3] + (e.clientY - drag[1]) * 0.01)); drawCloud(); });
+  canvas.addEventListener("pointerup", () => { drag = null; canvas.style.cursor = "grab"; });
+  canvas.addEventListener("wheel", (e) => { e.preventDefault(); view.zoom = Math.max(0.3, Math.min(5, view.zoom * (e.deltaY > 0 ? 0.9 : 1.1))); drawCloud(); }, { passive: false });
+  canvas.width = 960; canvas.height = 630;
+  selM.value = models.includes("B1") ? "B1" : models[0];
+  fillClips(null);
+  render();
+
+})();
+</script>
+
+</body></html>
