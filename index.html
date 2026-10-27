@@ -123,6 +123,9 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
 .vrow > figure { min-width: 0; }
 #vCloud, #g1Cloud { width: 100%; height: auto; aspect-ratio: 640 / 420; max-width: 100%; display: block; background: var(--sunk); border-radius: 6px; cursor: grab; touch-action: none; }
 #vTraj svg, #g1Traj svg { width: 100%; height: auto; display: block; }
+#ofCloud { width: 100%; height: auto; aspect-ratio: 960 / 630; max-width: 100%; display: block; background: var(--sunk); border-radius: 6px; cursor: grab; touch-action: none; }
+#ofTraj svg { width: 100%; height: auto; display: block; }
+#ofImg { width: 100%; display: block; border-radius: 4px; background: var(--sunk); min-height: 120px; }
 @media (max-width: 560px) {
   .block { grid-template-columns: 1fr; }
   dl.gloss { grid-template-columns: 1fr; }
@@ -135,11 +138,11 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
 <header>
   <div class="eyebrow">MiniMax-H3 × VGGT-Ω · 几何分支</div>
   <h1>H3-4D 训练报告</h1>
-  <p class="lede prose">在 MiniMax-H3 视频生成模型上接 VGGT-Ω 的预训练深度头和相机头，让同一个模型同时输出 RGB、深度和相机位姿。本报告记录上线前的核对、阶段 A（过拟合验证）和阶段 B（TartanAir 全量训练）、户外片段深度异常的排查，以及之后的 G1：从 H3 原始权重出发、只给一张图就联合生成 RGB 视频 + 深度 + 相机（进行中）。</p>
+  <p class="lede prose">在 MiniMax-H3 视频生成模型上接 VGGT-Ω 的预训练深度头和相机头，让同一个模型同时输出 RGB、深度和相机位姿。本报告记录上线前的核对、阶段 A（过拟合验证）和阶段 B（TartanAir 全量训练）、户外片段深度异常的排查，之后的 G1（只给一张图就联合生成 RGB 视频 + 深度 + 相机）及其问题定位，以及当前的阶段 1：冻结 H3，只训练读 DiT 特征的几何解码器，先在 TartanAir 上过拟合到超过 VGGT-Ω；最后一节记录冻结 DiT 之后，从 256 个窗口到全量 TartanAir 逐步确定解码器结构的实验。</p>
   <div class="meta" id="chips"></div>
   <nav class="toc" aria-label="目录">
     <a href="#summary">要点</a><a href="#setup">模型方案</a><a href="#data">训练数据</a><a href="#checks">上线前核对</a>
-    <a href="#stageA">阶段 A 过拟合</a><a href="#stageB">阶段 B 全量训练</a><a href="#vis">可视化结果</a><a href="#outdoor">户外片段排查</a><a href="#g1">G1 联合生成</a><a href="#ablations">消融实验计划</a><a href="#next">B1 结论与下一步</a><a href="#glossary">指标说明</a>
+    <a href="#stageA">阶段 A 过拟合</a><a href="#stageB">阶段 B 全量训练</a><a href="#vis">可视化结果</a><a href="#outdoor">户外片段排查</a><a href="#g1">G1 联合生成</a><a href="#g1diag">G1 问题定位</a><a href="#stage1">阶段 1（S1）</a><a href="#ofnorm">解码器简化</a><a href="#decx">解码器探索（冻结 DiT）</a><a href="#ablations">消融实验计划</a><a href="#next">B1 结论与下一步</a><a href="#glossary">指标说明</a>
   </nav>
 </header>
 
@@ -424,7 +427,7 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
     <dt>结论</dt><dd id="outdoorConclusion">
       <p style="margin-top:0">seasonsforest 的高误差主要来自<b>近处的细碎枝叶</b>：真值把每片叶子、每根枝条都记成近处，叶缝里是几十米外的背景；模型和教师都只能预测平滑的树冠，在“预测远、真值近”的像素上相对误差可达数倍。11% 的像素贡献了 69% 的误差，50–200 m 的远处像素只贡献 1.3%。所以<b>截断远处深度对这一段的 AbsRel 帮助很小</b>。</p>
       <p>VGGT-Ω 论文没有设全局 max depth；代码支持按数据集设上限，但默认关闭，公开配置里只有 uCo3D 设了 256。他们训练用的是 TartanAir V2 和 TartanGround（不是我们用的 V1），这两个数据集的配置没有公开。真值归一化和我们完全相同（所有有效点到第一帧相机的平均距离）。在这几段上，把上限从 200 m 降到 80 m 只会让 seasonsforest、neighborhood 的平均深度变化 5–9%；只有 westerndesert 这种空旷场景变化明显（45%）。教师的原始尺度偏差在室内段同样存在，所以<b>不是</b>远处深度造成的。</p>
-      <p>按你的决定：B1 不动，继续训练；深度上限作为消融 X3（见“消融实验计划”）。另外补一套与 VGGT-Ω 一致的评估指标（0.1–100 m，逐帧中位数尺度 + 平移对齐），并同时报告中位数相对误差，避免少数像素主导平均值。</p>
+      <p>决定：B1 不动，继续训练；深度上限作为消融 X3（见“消融实验计划”）。另外补一套与 VGGT-Ω 一致的评估指标（0.1–100 m，逐帧中位数尺度 + 平移对齐），并同时报告中位数相对误差，避免少数像素主导平均值。</p>
     </dd>
   </dl>
   <figure>
@@ -635,6 +638,30 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
     </dd>
   </dl>
 
+  <h3>第 2000 步评估与分析（训练在此停止）</h3>
+  <div class="prose"><p>按计划在第 2000 步（约 2.4 万个训练片段，约 18 小时）评估后停止训练，检查点已保存。下表是 16 个重建片段 / 8 个单图生成片段上的结果；“改善片段数”是逐片段配对比较第 1000 步与第 2000 步，p 值来自符号置换检验。每个片段只采样一次，所以单个片段的变化有较大随机性，结论以配对统计为准。</p></div>
+  <div class="tbl"><table>
+    <tr><th>分支</th><th>指标</th><th>第 1000 步</th><th>第 2000 步</th><th>改善片段数</th><th style="text-align:left">判断</th></tr>
+    <tr><td>相机</td><td>重建模式旋转误差</td><td>21.1°</td><td class="best">9.2°</td><td>16 / 16</td><td style="text-align:left;white-space:normal">确定改善；旋转误差 &lt; 5° 的帧对从 2% 升到 23%</td></tr>
+    <tr><td></td><td>重建模式平移方向误差</td><td>80.3°</td><td>63.6°</td><td>11 / 16</td><td style="text-align:left;white-space:normal">有改善（p ≈ 0.02），中位数 82° → 55°；但两极分化：9 段低于 60°，另有 3 段 endofworld/Easy 在 110° 以上（方向基本反了）</td></tr>
+    <tr><td></td><td>重建模式 AUC@30</td><td>0.023</td><td>0.069</td><td>11 / 16</td><td style="text-align:left;white-space:normal">仍远低于 B1 第 914 步的 0.58</td></tr>
+    <tr><td></td><td>单图生成：旋转 / 平移方向 vs VGGT-Ω</td><td>18.3° / 90.1°</td><td>6.0° / 89.1°</td><td>8 / 8；3 / 8</td><td style="text-align:left;white-space:normal">旋转改善；平移方向仍在随机水平，但生成的视频几乎不动（净位移只有真实片段的 1/3–1/10），这项指标在这里参考价值有限</td></tr>
+    <tr class="sep"><td>深度</td><td>重建模式 AbsRel（逐帧对齐）</td><td>0.284</td><td>0.333</td><td>9 / 16</td><td style="text-align:left;white-space:normal">形状没有变差：中位数 0.238 → 0.235，平均值上升全部来自 1 个片段（仰拍厂房屋顶，屋顶被生成成“最远 / 天空”，0.36 → 1.15）；去掉它变化为 0</td></tr>
+    <tr><td></td><td>重建模式 AbsRel（原始尺度）</td><td>0.590</td><td class="badv">1.044</td><td>5 / 16</td><td style="text-align:left;white-space:normal">绝对尺度变得不稳定：尺度整体偏差超过 1.25 倍的片段从 3 段增加到 7 段，偏大偏小都有</td></tr>
+    <tr><td></td><td>单图生成第 0 帧 AbsRel</td><td>0.418</td><td>0.684</td><td>4 / 8</td><td style="text-align:left;white-space:normal">中位数 0.257 → 0.297，属于噪声范围；平均值主要被 1 个片段拉高（画面上部的墙面 / 水面被生成成“最远”）</td></tr>
+  </table></div>
+  <dl class="block">
+    <dt>相机：变好了，但机制没变</dt><dd>
+      <p style="margin-top:0">评估上相机确实在进步（上表）。但把训练损失按时间步分组、控制住 t 之后，噪声最大一段（t &lt; 0.1）重建样本与单图样本的相机损失之比是 1.02（95% 置信区间 0.94–1.11），第 1500–2000 步单独看也是 0.98：相机分支<b>仍然没有利用干净的 RGB</b>。同样的检验在深度上给出 0.73（p &lt; 10⁻²⁰），说明检验本身灵敏度足够。噪声最大一段的相机损失从第 1200 步左右起基本不再下降；中等噪声（t = 0.3–0.7）的相机损失仍以每 1000 步约 22–25% 的速度下降，且两种样本完全同步，这对应的是“raymap 自身去噪变得更好”。</p>
+      <p>两者并不矛盾：损失是对全部 raymap 通道平均的，平移只占其中一小部分方差，如果相机分支只用 RGB 推出了很粗的平移，可能低于损失检验约 6% 的分辨率。但可以确定的是，“从 RGB 推相机”还远没有成为相机分支的主要信息来源。</p>
+    </dd>
+    <dt>相机轨迹</dt><dd>4 帧周期的跳动仍然是生成轨迹里最主要的高频成分（每个片段都显著），幅度比第 1000 步缩小约 23%（重建）/ 52%（单图）。重建模式的整体漂移幅度明显变大：与真值的比值中位数从 0.35 升到 0.62，carwelding/Easy/P001 的方向和幅度已基本正确（0.82 倍、偏 19°）。按相机中心估算，即使把 4 帧周期的偏移完全去掉，重建模式平移方向误差也只会从约 57° 降到约 51°，剩下的主要是整体运动方向和幅度不对。所以只修 raymap 的打包方式不够，关键仍是让相机分支学会从 RGB 推运动。</dd>
+    <dt>深度：形状稳定，尺度不稳</dt><dd>逐帧对齐后的深度形状与第 1000 步持平，训练损失仍在下降（0.261 → 0.226）。新出现的问题有两个：① 个别片段把大面积的真实表面（屋顶、墙面）生成成“最远 / 天空”，这正是深度编码里无效像素和天空共用的那个值；单图生成的“深度 vs VGGT-Ω”指标会排除被生成为天空的像素，所以看不到这种错误。② 绝对尺度变得不稳定：深度用对数编码到 [0, 1]（0.05–20），解码图整体只要偏 3.7% 的亮度，尺度就差 1.25 倍。</dd>
+    <dt>对后续计划的含义</dt><dd>
+      <p style="margin-top:0">① 相机：问题仍是高噪声段不读 RGB，第 1000 步提出的修正（重建样本中几何流的时间步偏向纯噪声、RGB 保持干净）依然最直接；低维相机 token（X9）是更彻底的方案。② 深度：天空 / 无效值与“很远”不应共用同一个编码值（例如单独给一个有效性通道，或把天空排除在深度流之外），尺度可以考虑由相机分支或单独的尺度 token 给出；第二版计划中的回归损失 + VGGT-Ω DPT 解码器也直接针对解码精度。③ 评估：目前每个片段只采样一次、片段数少（16 / 8），单片段波动很大；做决策前建议扩大评估集或每段多次采样。</p>
+    </dd>
+  </dl>
+
   <h3>第一次尝试：通道拼接 + 零初始化（已停止，对应消融 X7）</h3>
   <dl class="block">
     <dt>做了什么</dt><dd>三路在通道维拼接（每个 token 同时带 RGB、深度、raymap），深度 / raymap 通过两个零初始化的投影加到 RGB 的 embedding 上；时间步取 logit-normal 加 shift 5。batch 30 训练到第 1194 步（约 3.6 万段、14 小时）后停止。</dd>
@@ -677,6 +704,382 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
   </div>
 </section>
 
+<section id="g1diag">
+  <h2>G1 问题定位（第 2000 步之后）</h2>
+  <div class="prose"><p>G1 停在第 2000 步时，三个分支都不满足要求：生成的 RGB 几乎不动；深度有全图块状纹理和错位块；相机生成和重建都不准。下面的排查全部只做评估、不训练，用 G1 第 2000 步的检查点（脚本 <code>scripts/diag_g1.py</code>、<code>scripts/encode_prompts.py</code>）。</p></div>
+
+  <h3>RGB：画面几乎不动 —— 原因是没有文本条件</h3>
+  <dl class="block">
+    <dt>做了什么</dt><dd>H3 官方的首帧生成视频，会把“<code>&lt;Picture 1&gt;: </code> + 首帧图像经 Qwen3-VL 编码的视觉 token + 提示词”整体送进 Qwen3-VL，取第 50 层输出作为条件；画面怎么动完全由文本控制。G1 一直用的是一个全零向量。我们在同样 8 个首帧上换不同的文本条件生成，再用 VGGT-Ω 估计生成视频的相机运动，并算逐帧光流。</dd>
+  </dl>
+  <div class="tbl"><table>
+    <tr><th>文本条件</th><th>每帧光流</th><th>相机路径长度</th><th>相机净位移</th><th>首尾旋转</th></tr>
+    <tr><td style="text-align:left">真实片段（参照）</td><td>9.7 px</td><td>0.92</td><td>0.62</td><td>27°</td></tr>
+    <tr class="sep"><td style="text-align:left">全零文本，shift 5，30 步（G1 的做法）</td><td class="badv">1.2 px</td><td class="badv">0.064</td><td class="badv">0.058</td><td>5°</td></tr>
+    <tr><td style="text-align:left">全零文本，shift 12，50 步（官方采样设置）</td><td>1.3 px</td><td>0.065</td><td>0.059</td><td>5°</td></tr>
+    <tr><td style="text-align:left">首帧 + 空提示词</td><td>0.3 px</td><td>0.032</td><td>0.028</td><td>2°</td></tr>
+    <tr><td style="text-align:left">首帧 + “镜头向前快速推进”</td><td class="best">3.0 px</td><td class="best">0.57</td><td class="best">0.57</td><td>8°</td></tr>
+    <tr><td style="text-align:left">首帧 + “镜头静止”</td><td>0.03 px</td><td>0.005</td><td>0.001</td><td>0°</td></tr>
+  </table></div>
+  <figure>
+    <img src="diagvis/rgb_motion.jpg" alt="不同文本条件下 H3 的生成结果" loading="lazy" style="width:100%;border-radius:4px">
+    <figcaption>
+      <span><b>怎么看</b>每行是第 0、7、14、21 帧。从上到下：真实片段；全零文本 shift 5；全零文本 shift 12；首帧 + 空提示词；首帧 + 前进提示词；首帧 + 静止提示词；前进提示词 + shift 5。相机路径长度和净位移都除以第 0 帧的中位深度，与尺度无关。</span>
+      <span><b>结论</b>加上运动提示词后，生成视频的相机净位移（0.57）和真实片段（0.62）基本一致；“静止”提示词则完全不动；采样步数和 shift 没有影响。所以“几乎不动”是条件设置问题，不需要训练。修正：用官方文本条件；训练时按每个片段的真值位姿自动生成运动描述（前进、转向等），并预先缓存 Qwen3-VL 编码（文本编码器很大，不能和 DiT 同时放在 GPU 上）。旋转仍小于真实片段，因为提示词只描述了前进。</span>
+    </figcaption>
+  </figure>
+
+  <h3>深度：两个尺度、两个原因</h3>
+  <dl class="block">
+    <dt>16 px 全图纹理</dt><dd>来自 RGB VAE 解码器。H3 的 VAE 解码器是 ViT，每个 latent 像素经一个线性层直接展开成 16×16 的像素块。只改动深度 latent 中的一个像素，解码结果就是一个边界锐利的 16×16 方块（覆盖同一潜帧的 4 帧；对数深度最多差 2.6，即深度差约 13 倍）；latent 噪声越大，块状越严重。真值深度只做一次编码—解码，AbsRel 就有 0.035（分块解码；不分块解码为 0.108 且纹理明显，必须用分块解码），已经高于 VGGT-Ω 的约 0.027，所以用这个解码器不可能超过 VGGT-Ω。</dd>
+    <dt>32 px 错位块</dt><dd>来自 DiT 生成时单个 token 出错：这些块的位置恰好对齐 DiT 的 token 网格（每个 token 是 2×2 个 latent 像素，即 32×32 像素）。从纯噪声生成的深度明显差于从加噪真值一步预测（latent 误差 0.76 vs 0.22，AbsRel 0.54 vs 0.14，t = 0.3），生成 latent 跨 token 边界的跳变比 token 内部大 18%（真值没有这个差别）；远处区域常被生成为“天空”编码值（天空、无效像素与“很远”共用同一个值）。采样从 30 步增加到 100 步没有改善。</dd>
+  </dl>
+  <div class="imgs">
+    <div><img src="diagvis/impulse.jpg" alt="单个 latent 像素扰动的解码结果" loading="lazy"><div class="cap">单点测试：原始解码 / 某个 latent 像素 +2 倍标准差后的解码 / 两者之差。差异是一个边界锐利的 16×16 方块。（此图为不分块解码，背景可见 16 px 纹理）</div></div>
+    <div><img src="diagvis/gen_depth.jpg" alt="G1 第 2000 步的深度生成对比" loading="lazy"><div class="cap">每行 4 帧，自上而下：真值；真值编码—解码（不分块）；重建模式采样（分块解码）；重建采样（不分块）；采样 100 步；从加噪真值（t = 0.9）一步预测；单图生成。颜色按对数深度（暖色远）。重建采样中远处被压成“天空”色，并有方块。</div></div>
+  </div>
+
+  <h3>相机：与静止相机相当，解码方式本身也有损失</h3>
+  <div class="tbl"><table>
+    <tr><th>项目（重建模式，16 个验证窗口）</th><th>旋转误差</th><th>平移方向误差</th><th>旋转 &lt; 5° 比例</th><th>AUC@30</th></tr>
+    <tr><td style="text-align:left">“相机完全不动”基线</td><td>8.75°</td><td>90°</td><td>40%</td><td>0.00</td></tr>
+    <tr><td style="text-align:left">G1 第 2000 步，自由内参 DLT 拟合（评估默认）</td><td class="badv">8.6°</td><td>60°</td><td>22%</td><td>0.05</td></tr>
+    <tr><td style="text-align:left">同一批生成光线，已知内参拟合</td><td>6.6°</td><td>60°</td><td>37%</td><td>0.06</td></tr>
+    <tr><td style="text-align:left">从加噪到 t = 0.4 的真值光线出发采样（上限参照）</td><td>1.8°</td><td>16°</td><td>99%</td><td>0.58</td></tr>
+    <tr><td style="text-align:left">VGGT-Ω（参照）</td><td>0.2°</td><td>—</td><td>—</td><td>—</td></tr>
+  </table></div>
+  <dl class="block">
+    <dt>因果测试</dt><dd>在噪声最大处（t = 0.02）让模型一步预测相机，分别给它真实画面、同一片段倒放的画面（外观相同、只有运动方向相反）、另一片段的画面：平移方向误差分别是 57°、89°、76°。倒放后平移方向变成随机，说明相机分支确实在利用画面里的运动（第 2000 步分析中“相机分支没有用 RGB”的推断不成立，以此测试为准），只是读得很弱。</dd>
+    <dt>结论</dt><dd>G1 生成的相机和“静止相机”基线相当；用自由内参从光线场拟合相机（DLT）对噪声很敏感，真值光线加一点噪声，旋转误差就会爆到 100° 以上；即使从加噪真值出发，“raymap latent → 光线场 → 拟合相机”这条路的精度上限也只有 AUC@30 0.58。</dd>
+  </dl>
+  <div class="note"><b>总结</b>RGB 不动是推理设置问题，换官方文本条件即可。深度和相机的主要瓶颈都在“解码”这一环（RGB VAE 解码器、raymap 拟合相机），另外从纯噪声推断的能力偏弱。因此第一阶段改为：冻结 H3，只训练直接读 DiT 特征的几何解码器。</div>
+</section>
+
+<section id="stage1">
+  <h2>阶段 1：冻结 H3 + 几何解码器（S1）</h2>
+  <dl class="block">
+    <dt>项目目标</dt><dd>训练一个基于 MiniMax-H3、生成和重建统一的 RGB—深度—相机模型，几何精度至少与 VGGT-Ω 打平。这首先是一个工程问题：要把训练基础设施搭好、验证扎实。</dd>
+    <dt>分阶段</dt><dd>第一阶段：冻结 H3 的 VAE 编码器和 DiT（不加 LoRA），只训练几何解码器，先在 TartanAir 上过拟合；过拟合结果应能追平甚至超过 VGGT-Ω，以此验证训练基础设施。第二阶段：加入更多数据，并放开 DiT 训练。</dd>
+    <dt>结构</dt><dd>真实或生成的视频 → H3 VAE 编码（冻结）→ H3 DiT 干净前向（冻结，t = 1）→ 取第 12、24、36、49 层视频 token → 4 个适配器（每个 DiT token 展开为 4 帧 × 2×2 个 2048 维子 token，正好是 VGGT-Ω 头部要求的每帧 24×32 网格）→ VGGT-Ω 的 DPT 深度头（输出 384×512 深度 + 置信度）和相机头（17 个可学习相机 query 读最后一层，输出平移、四元数、视场角）。两个头用 VGGT-Ω 1B-512 的预训练权重初始化。深度不再经过 RGB VAE 解码，相机不再从 raymap 拟合。</dd>
+    <dt>可训练</dt><dd>适配器（1.11 亿参数）、相机 query（1.01 亿）、DPT 深度头（0.32 亿）、相机头（2.04 亿）。H3 全部冻结。</dd>
+    <dt>损失</dt><dd>只用真值：VGGT-Ω 官方相机损失、带置信度的深度 L1（含梯度项和法线项）、由预测深度和相机反投影的点云损失。不用教师蒸馏；VGGT-Ω 只作为评估参照，在完全相同的片段上计算同样的指标。</dd>
+    <dt>两种模式</dt><dd>重建：真实视频直接进入上述流程。生成：H3 用官方文本条件从首帧生成视频，再对生成视频做同样的特征提取和解码。两种模式下解码器看到的都是“干净视频 latent + 零文本”的 DiT 特征，输入分布一致。</dd>
+    <dt>与 B1 的区别</dt><dd>结构相同，但 DiT 上没有 LoRA、没有教师蒸馏，也不再把 B1 当作单独的感知任务，而是作为统一模型的解码器部分。</dd>
+  </dl>
+
+  <h3>S1a：8 个训练片段的快速过拟合验证</h3>
+  <dl class="block">
+    <dt>为什么做</dt><dd>全量训练要十几个小时。先用 8 个固定片段、每一步训练全部 8 段，约 1 小时就能看出整套流程能否把训练数据拟合到 VGGT-Ω 的水平；如果不能，在小数据上排查成本最低。</dd>
+    <dt>设置</dt><dd>阶段 A 用过的 8 个训练片段（8 个场景各 1 段，其中 seasonsforest 是户外细枝叶）+ 2 个验证片段；batch 8，1500 步，适配器和相机 query 学习率 2e-4，两个预训练头 5e-5，预热 50 步后余弦退火；每 100 步评估。latent 预先缓存，每步约 2.1 秒。</dd>
+    <dt id="s1aStatus">结论</dt><dd id="s1aConcl"><span class="pending">加载中。</span></dd>
+  </dl>
+  <figure>
+    <div class="fig-title">S1a 训练片段上的指标变化（虚线为 VGGT-Ω 在同样 8 段上的结果）</div>
+    <div class="charts"><div class="chart" id="chS1aDepth"></div><div class="chart" id="chS1aCam"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>每 100 步在 8 个训练片段上评估一次，取 8 段平均。左图是深度 AbsRel（逐帧中位数对齐后），右图是相机旋转误差和平移方向误差（所有帧对的相对位姿，中位数，单位度）。</span>
+      <span><b>怎么看</b>越低越好；曲线降到虚线以下，表示在这些片段上超过了 VGGT-Ω。纵轴为对数刻度。</span>
+      <span id="s1aChartConcl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">S1a 最终结果，逐片段对比 VGGT-Ω</div>
+    <div class="tbl"><table id="tblS1aClips"></table></div>
+    <figcaption>
+      <span><b>怎么看</b>深度为逐帧中位数对齐后的 AbsRel；“原始”为不做任何缩放的 AbsRel（我们直接输出真值约定的尺度；VGGT-Ω 有自己的尺度约定，原始值不可比，所以只列逐帧对齐）。相机为所有帧对相对位姿误差的中位数。绿色表示优于 VGGT-Ω。</span>
+      <span><b>结论</b>8 个训练片段中，相机三项指标全部优于 VGGT-Ω；深度 7 段优于或持平。seasonsforest 一段两者都在 0.8 左右：画面中大量细枝叶与远背景交错，逐帧中位数对齐本身就不稳定（与“户外片段排查”一节的结论一致）；这一段也是平均值里“逐帧对齐比原始尺度更差”的来源。2 个验证片段只用 8 段数据训练、谈不上泛化，误差明显更大，这是预期之内的。</span>
+    </figcaption>
+  </figure>
+  <div class="imgs">
+    <div><img src="s1vis/S1a_of8_frozen_depth_train_step00000.jpg" alt="S1a 第 0 步训练片段深度" loading="lazy"><div class="cap">训练片段（abandonedfactory），第 0 步：真值 / 预测 / 相对误差，三行为不同帧。训练前预测是一片常数。</div></div>
+    <div><img src="s1vis/S1a_of8_frozen_depth_train_step00100.jpg" alt="S1a 第 100 步训练片段深度" loading="lazy"><div class="cap">同一片段，第 100 步：整体布局已经正确。</div></div>
+    <div><img src="s1vis/S1a_of8_frozen_depth_train_step01500.jpg" alt="S1a 第 1500 步训练片段深度" loading="lazy"><div class="cap">同一片段，第 1500 步：与真值基本一致，误差只在物体边缘；没有任何块状纹理（深度由 DPT 头直接回归，不经过 VAE 解码）。</div></div>
+    <div><img src="s1vis/S1a_of8_frozen_depth_val_step01500.jpg" alt="S1a 第 1500 步验证片段深度" loading="lazy"><div class="cap">验证片段（carwelding），第 1500 步：只用 8 段训练，泛化很差，结构模糊、多处错误。全量训练（S1b）用来看泛化。</div></div>
+  </div>
+  <div class="prose"><p style="font-size:var(--step--1);color:var(--ink-2)">深度着色：按逆深度（暖色近），色标取自真值；误差列满刻度 30%。</p></div>
+
+  <h3>S1b：全量 TartanAir</h3>
+  <dl class="block">
+    <dt>设置</dt><dd>训练集 11 个场景（238 条轨迹、18.4 万帧）中所有不重叠的 22 帧窗口，帧间隔 1 和 2，共 12,428 个窗口，每轮打乱后全部训练一遍；batch 8，1.5 万步（约 10 轮）；其余与 S1a 相同。每个窗口的 VAE latent 第一次编码后存盘，第一轮约 6 秒一步，之后约 2.2 秒一步。每 1000 步在 16 个固定训练窗口和 32 个验证窗口上与 VGGT-Ω 对比。</dd>
+    <dt>状态</dt><dd id="s1bStatus"><span class="pending">训练中。</span></dd>
+  </dl>
+  <figure>
+    <div class="fig-title">S1b：训练窗口和验证窗口上的指标变化（虚线为 VGGT-Ω 在同样窗口上的结果）</div>
+    <div class="charts"><div class="chart" id="chS1bDepth"></div><div class="chart" id="chS1bCam"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>每 1000 步评估一次：16 个固定训练窗口（都在训练池里）和 32 个验证窗口（训练从未见过的两个场景）。左图深度 AbsRel（逐帧对齐），右图相机旋转误差和平移方向误差（中位数，度）。</span>
+      <span><b>怎么看</b>实线为训练窗口，虚线为验证窗口；越低越好，纵轴为对数刻度。</span>
+      <span id="s1bChartConcl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">S1b 最终结果，对比 VGGT-Ω 和 B1</div>
+    <div class="tbl"><table id="tblS1bFinal"></table></div>
+    <figcaption>
+      <span><b>怎么看</b>B1 一列是 B1 第 5000 步在完全相同的 32 个验证窗口上的结果（B1 的 DiT 有 LoRA，前半程有教师蒸馏，共训练约 3.5 万个片段；S1b 训练了 12 万个片段）。</span>
+      <span id="s1bFinalConcl"></span>
+    </figcaption>
+  </figure>
+
+  <h3>S1c：256 个窗口的记忆测试</h3>
+  <dl class="block">
+    <dt>为什么做</dt><dd>S1b 跑完 10 轮，训练窗口和验证窗口的指标几乎一样，没有进入“背下来”的状态。要区分两种可能：主要是训练量不够，还是冻结的 DiT 特征 / 解码器容量不够。</dd>
+    <dt>做了什么</dt><dd>从 S1b 的 12,428 个窗口中均匀抽取 256 个作为全部训练数据，训练窗口的评估改为其中 16 个（保证评的是背过的窗口）；其余设置与 S1b 完全相同（冻结 H3、只用真值、无教师，batch 8，学习率 2e-4 / 5e-5，余弦退火）。2000 步，每个窗口约被训练 62 次。</dd>
+  </dl>
+  <figure>
+    <div class="fig-title">S1c：训练（被记忆）的 16 个窗口和验证窗口上的指标变化</div>
+    <div class="charts"><div class="chart" id="chS1cDepth"></div><div class="chart" id="chS1cCam"></div></div>
+    <figcaption>
+      <span><b>怎么看</b>实线为训练窗口，虚线为验证窗口；虚线横线为 VGGT-Ω 在这 16 个训练窗口上的结果。</span>
+      <span id="s1cConcl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">三个规模的对比：每个窗口被训练的次数与训练窗口上的拟合程度</div>
+    <div class="tbl"><table id="tblS1Scale"></table></div>
+    <figcaption>
+      <span><b>怎么看</b>三个实验结构和损失完全相同，只有训练集规模和步数不同。“每窗口训练次数”= 步数 × batch ÷ 窗口数。VGGT-Ω 列是它在对应训练窗口上的结果。最后一列验证窗口：S1a 是 2 个固定验证片段，S1c 和 S1b 是同样的 32 个验证窗口。</span>
+      <span><b>结论</b>冻结 H3 + 解码器能把训练数据“背下来”，但需要每个窗口被训练很多次：8 个窗口约 1500 次后全面超过 VGGT-Ω；256 个窗口 62 次后旋转 2.35°（VGGT-Ω 0.29°），且学习率退火结束时仍在下降，验证窗口反而变差（典型的记忆状态）；12,428 个窗口只训练 10 次，处在“泛化”状态，训练和验证差不多。照这个速度，把全量 TartanAir 背到 VGGT-Ω 的水平需要上百万步，不现实。所以在现实的训练量下，模型的精度由“冻结特征 + 解码器能学到的通用映射”决定（S1b 验证窗口：深度 0.169、旋转 3.9°），而这明显低于 B1（DiT 有 LoRA）的 0.105、1.6°。</span>
+    </figcaption>
+  </figure>
+  <div class="imgs">
+    <div><img src="s1vis/S1c_mem256_depth_train_step02000.jpg" alt="S1c 第 2000 步训练窗口深度" loading="lazy"><div class="cap">S1c 第 2000 步，一个被记忆的训练窗口：真值 / 预测 / 误差。</div></div>
+    <div><img src="s1vis/S1b_full_frozen_depth_val_step15000.jpg" alt="S1b 第 15000 步验证窗口深度" loading="lazy"><div class="cap">S1b 第 15000 步，验证窗口：整体布局正确，但细结构模糊，远处和边缘误差大。</div></div>
+  </div>
+
+  <h3>生成模式评估：同一个解码器用于 H3 生成的视频</h3>
+  <dl class="block">
+    <dt>做了什么</dt><dd>用 S1b 的最终权重，在 8 个验证窗口上分别跑两条路。重建：真实视频 → 解码器，和真值比较。生成：只给第 0 帧，H3 按官方文本条件（首帧视觉 token + “镜头向前快速推进”提示词，shift 12，50 步）生成 22 帧视频 → 对生成视频提取同样的 DiT 特征 → 同一个解码器输出深度和相机；生成的视频没有真值，所以和 VGGT-Ω 在生成视频上的估计比较（一致性），第 0 帧深度和真值比较。</dd>
+  </dl>
+  <div class="tbl"><table id="tblS1Gen"></table></div>
+  <div class="imgs">
+    <div><img src="s1vis/s1b_gen_clip0.jpg" alt="生成模式：生成视频与深度" loading="lazy"><div class="cap">生成模式（carwelding）：生成的 RGB / 我们的深度 / VGGT-Ω 在生成视频上的深度（按中位数对齐尺度后着色）。四行为第 0、7、14、21 帧，镜头确实在向前推进。</div></div>
+    <div><img src="s1vis/s1b_gen_clip1.jpg" alt="生成模式第二个片段" loading="lazy"><div class="cap">生成模式（第二个片段）。我们的深度和 VGGT-Ω 布局一致、没有块状纹理，但细结构（栏杆、柱子边缘）更模糊。</div></div>
+    <div><img src="s1vis/s1b_recon_clip0.jpg" alt="重建模式对比" loading="lazy"><div class="cap">重建模式（同一窗口的真实视频）：真实 RGB / 真值深度 / 我们的深度 / VGGT-Ω。我们的结果明显比 VGGT-Ω 模糊。</div></div>
+  </div>
+  <div class="note" id="s1Next"><b>阶段 1 的结论与下一步</b>加载中。</div>
+</section>
+
+<section id="ofnorm">
+  <h2>解码器简化：H3 最后一层的归一化特征（过拟合测试）</h2>
+  <dl class="block">
+    <dt>为什么做</dt><dd>阶段 1 之后，我们在 256 个窗口上逐步改进了解码器（取哪几层 DiT 特征、VGGT-Ω 教师 token 监督等），结构越来越复杂：6 个中间层的加权组合、4 个独立适配器、自定义的逐通道标准化。这里换一个更简单、也更贴近统一模型的思路：DiT 保持冻结，只读 H3 的最后一层，而且用 H3 自己归一化之后的特征。这正是 H3 的视频输出头和音频输出头读取的表示，所以几何解码器相当于 H3 的“第三个输出头”（深度 + 相机）。</dd>
+    <dt>H3 自带的输出归一化</dt><dd>最后一层之后，H3 先做 RMSNorm（带学到的逐通道权重），再按时间步做逐通道缩放和平移，然后才接输出投影（5376 维 → 每个 token 的 96 维 latent）。我们取输出投影之前的 5376 维特征，时间步固定为 t = 0.8，与特征提取时的加噪一致。它已经压住了 H3 残差流里的超大数值通道（见下表），不再需要我们自己统计的标准化参数；这些参数在生成模式下或放开 DiT 之后都可能失效。</dd>
+    <dt>结构</dt><dd>H3 第 49 层（冻结）→ H3 输出归一化（冻结）→ 共享展开模块：每个 DiT token（4 帧 × 32×32 像素）展开成 4 帧 × 2×2 个 2048 维 token → 4 个输出头（LayerNorm + 线性层，初始化为恒等）→ VGGT-Ω DPT 深度头的 4 路输入。展开后的特征同时进入相机查询模块（每帧 17 个查询，读本帧和第 0 帧），再进 VGGT-Ω 相机头（原版设置）。可训练参数：展开模块和输出头 0.73 亿，相机查询 1.01 亿，两个预训练头 2.36 亿（小学习率微调）。</dd>
+    <dt>损失</dt><dd>真值损失（VGGT-Ω 的训练损失：相机、带置信度的深度、点云）加 VGGT-Ω 教师 token 损失：4 路输出分别对齐 VGGT-Ω 第 4、11、17、23 层的 token，相机 token 对齐第 23 层的相机 token；教师在某个窗口上自身误差大时降低该窗口的权重。教师只在训练时用，推理时不需要。</dd>
+    <dt>测试设置</dt><dd>16 个训练窗口（从训练评估窗口中均匀抽取，覆盖多个场景），batch 16，即每一步都用到全部 16 个窗口，共 1200 步；学习率等与此前实验相同。每 300 步在这 16 个窗口、32 个 held-out 窗口（训练场景中没训练过的窗口）和 32 个验证窗口（没见过的场景）上评估。目的是测这种解码器能把训练数据拟合到什么程度，以 VGGT-Ω 在同样窗口上的结果为参照。</dd>
+  </dl>
+  <figure>
+    <div class="fig-title">H3 第 49 层特征在不同归一化下的数值分布</div>
+    <div class="tbl"><table>
+      <tr><th>处理方式</th><th>最大绝对值</th><th>最大 8 个通道占总能量</th></tr>
+      <tr><td style="text-align:left">原始特征</td><td>68 万</td><td>26.3%</td></tr>
+      <tr><td style="text-align:left">普通 LayerNorm</td><td>48.9</td><td>25.9%</td></tr>
+      <tr><td style="text-align:left"><b>H3 自带输出归一化（t = 0.8）</b></td><td><b>2.9</b></td><td><b>3.6%</b></td></tr>
+      <tr><td style="text-align:left">逐通道标准化 + LayerNorm（此前的做法）</td><td>8.6</td><td>0.2%</td></tr>
+    </table></div>
+    <figcaption>
+      <span><b>做了什么</b>取 8 个窗口第 49 层的全部 token，统计各种归一化之后的最大绝对值，以及能量最大的 8 个通道占全部能量的比例。</span>
+      <span><b>结论</b>普通 LayerNorm 压不住少数超大数值通道；H3 自带的归一化主要靠 RMSNorm 学到的逐通道权重把这些通道调小，效果接近我们的逐通道标准化，而且不依赖任何数据统计。</span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">训练过程中的指标变化（虚线横线为 VGGT-Ω 在 16 个训练窗口上的结果）</div>
+    <div class="charts"><div class="chart" id="chOFDepth"></div><div class="chart" id="chOFCam"></div></div>
+    <figcaption>
+      <span><b>怎么看</b>实线为 16 个训练窗口，虚线为没训练过的窗口；越低越好，纵轴为对数刻度。深度为逐帧中位数对齐后的 AbsRel，相机为所有帧对相对位姿误差的中位数。</span>
+      <span id="ofChartConcl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">最终结果（第 1200 步）与 VGGT-Ω 对比</div>
+    <div class="tbl"><table id="tblOF"></table></div>
+    <figcaption>
+      <span><b>怎么看</b>每组两列：我们 / VGGT-Ω（在完全相同的窗口上）。绿色表示优于 VGGT-Ω。</span>
+    </figcaption>
+  </figure>
+
+  <h3>可视化</h3>
+  <div class="viewer" id="ofviewer">
+    <div class="controls">
+      <label for="ofClip">窗口</label><select id="ofClip"></select>
+    </div>
+    <div class="vmeta" id="ofMeta"></div>
+    <figure class="vfig">
+      <div class="colhead" style="--cols:5"><span>RGB 输入</span><span>真值深度</span><span>我们</span><span>VGGT-Ω</span><span>我们的相对误差</span></div>
+      <img id="ofImg" alt="深度对比">
+      <figcaption><span><b>怎么看</b>四行为第 0、7、14、21 帧。深度按逆深度着色（暖色近），三列共用取自真值的色标；VGGT-Ω 有自己的尺度约定，整段只乘一个系数对齐到真值的中位数深度，我们的输出不做任何对齐。最后一列是我们的相对误差，满刻度 30%，灰色为无真值像素。</span></figcaption>
+    </figure>
+    <div class="vrow">
+      <figure class="vfig">
+        <div class="fig-title">相机轨迹（俯视）</div>
+        <div id="ofTraj"></div>
+        <figcaption><span><b>怎么看</b>22 帧相机中心，第 0 帧坐标系；真值和我们的输出都在归一化后的真值尺度里，VGGT-Ω 按同一个系数缩放。</span></figcaption>
+      </figure>
+      <figure class="vfig">
+        <div class="fig-title">点云（拖动旋转，滚轮缩放）</div>
+        <div class="controls small"><button type="button" data-m="ours" class="on">我们</button><button type="button" data-m="gt">真值</button><button type="button" data-m="vggt">VGGT-Ω</button></div>
+        <canvas id="ofCloud" width="960" height="630" aria-label="点云"></canvas>
+        <figcaption><span><b>怎么看</b>用各自的深度和各自的相机，把 22 帧反投影到同一坐标系，颜色取自真实 RGB，随机抽 1.2 万个有真值的像素。深度和相机只要有一个不准，多帧拼出来的场景就会错位、重影。三种点云共用同一个视角，切换按钮即可对比。</span></figcaption>
+      </figure>
+    </div>
+  </div>
+  <div class="note" id="ofConcl"><b>结论与下一步</b>加载中。</div>
+  <div class="note"><b>后续更新</b>这个单层方案在全量数据上学不进去：训练窗口和验证集误差都停在 0.30 左右，比对第 49 层特征做的线性读出还差。原因是 H3 自带的输出归一化把大部分通道压小了上千倍，优化器用不上这些通道；上文“它已经压住了超大数值通道，不再需要我们自己的标准化”的判断只对数值范围成立，对训练并不成立。详见下一节“冻结 DiT 后的解码器探索”。</div>
+</section>
+
+<section id="decx">
+  <h2>冻结 DiT 后的解码器探索：从 256 个窗口到全量</h2>
+  <dl class="block">
+    <dt>目标</dt><dd>这一阶段 H3 的 DiT 保持冻结（不加 LoRA），只把“解码器”确定下来：读 DiT 的哪些层、这些特征怎样变成 VGGT-Ω 深度头和相机头的输入、用什么监督训练。解码器定下来之后，再放开 DiT 训练。</dd>
+    <dt>特征提取</dt><dd>每个训练窗口是 22 帧、384×512 的视频。先用 H3 的 VAE 编码，再加少量固定噪声（x<sub>t</sub> = 0.8·x<sub>0</sub> + 0.2·噪声，时间步 t = 0.8；每个窗口的噪声固定），配零文本，让 DiT 前向一次，存下所选层的视频 token。每个窗口有 7 个 latent 帧 × 12 × 16 = 1344 个 token，每个 5376 维；一个 token 覆盖 4 帧 × 32×32 像素（第 0 帧和第 17 帧各自单独占一个 latent 帧）。特征只算一次，训练时直接读缓存，H3 不参与训练。早期实验（A1–A6）用的是不加噪声的 t = 1 特征。</dd>
+    <dt>输出头</dt><dd>VGGT-Ω 1B-512 的 DPT 深度头和相机头，都用预训练权重初始化，以较小的学习率微调。DPT 头需要 4 路输入（对应 VGGT-Ω 主干第 4、11、17、23 层），每路是每帧 24×32 网格、每格 2048 维的 token；相机头每帧读 17 个 2048 维 token。解码器的任务就是把 DiT token 变成这两种格式。</dd>
+    <dt>评估</dt><dd>256 个窗口的实验每次评估三组窗口：训练窗口（64 个，在训练集里）、held-out（32 个，训练场景里没训练过的窗口）、验证（32 个，训练从未见过的两个场景 carwelding、endofworld）；全量实验只评估训练窗口和验证两组（held-out 窗口本身就在全量训练集里）。深度看逐帧中位数对齐后的 AbsRel，以及只看每个 DiT token 平均深度的“token 级” AbsRel（粗粒度误差）；相机看所有帧对相对位姿的旋转误差、平移方向误差（中位数，度）和 AUC@30。VGGT-Ω 在同样窗口上的结果作为参照：验证集深度 0.028、旋转 0.18°。两个实验之间的差异用逐窗口配对的 bootstrap 置信区间判断。</dd>
+  </dl>
+
+  <h3>解码器结构</h3>
+  <div class="prose"><p>两种方案的主要区别是读哪些层、怎么归一化、用几个适配器。另外三处不同：多层方案从 A6 起（含 F2）带一个很小的 RGB 卷积分支，单层方案没有；相机查询在多层方案里读 4 路适配器输出，在单层方案里只读共享适配器的输出；F2 重新打开了相机头的 LayerScale（0.1），F1 系列保持原版。输出头和损失函数相同。</p></div>
+  <figure>
+    <div class="fig-title">多层方案（图为 A9、V1a 和全量 F2 的结构；A1–A8 的差异见下方配置表）</div>
+    <div class="flow">
+      <div class="node frozen"><b>H3 DiT（冻结）</b>取第 12、24、36、49 层的视频 token，各 1344×5376</div><div class="arrow">→</div>
+      <div class="node train"><b>逐层归一化</b>每个通道减均值、除标准差（统计量来自训练窗口），截断 ±20，再 LayerNorm</div><div class="arrow">→</div>
+      <div class="node train"><b>4 个独立适配器</b>每层一个混合适配器（见下），各输出每帧 24×32×2048</div><div class="arrow">→</div>
+      <div class="node frozen"><b>VGGT-Ω DPT 深度头</b>4 层按深浅依次接 DPT 的 4 路输入 → 384×512 深度 + 置信度</div>
+    </div>
+    <div class="flow">
+      <div class="node frozen"><b>V1b–V1d 的读层方式</b>改读第 24、28、32、36、40、44 层（6 层），每层先逐通道标准化</div><div class="arrow">→</div>
+      <div class="node train"><b>可学习的层混合</b>DPT 的 4 路输入各自学一组 softmax 权重，把 6 层加权混合（初始偏向第 32、32、36、36 层）</div><div class="arrow">→</div>
+      <div class="node train"><b>4 个混合适配器</b>之后与上图相同</div>
+    </div>
+    <div class="flow">
+      <div class="node train"><b>相机查询</b>每帧 17 个可学习查询，读 4 路适配器输出（池化到每帧 12×16）以及第 0 帧的特征；键加 LayerNorm、层编号和二维位置编码</div><div class="arrow">→</div>
+      <div class="node frozen"><b>VGGT-Ω 相机头</b>17 个 token → 平移、四元数、视场角</div>
+    </div>
+    <figcaption>
+      <span><b>说明</b>浅色框为预训练或固定的模块（H3 完全冻结；两个 VGGT-Ω 头以小学习率微调），描边框为新训练的模块。逐通道标准化从 A8 开始使用（A1–A7 只有 LayerNorm）。A6 起的所有多层实验（A6–A9、V1a–V1d、F2）都带一个很小的 RGB 卷积分支：直接读输入帧，零初始化后加到 DPT 的 1/4、1/8 分辨率输入和融合后的 1/4 特征上；A6 的消融显示它几乎没有收益。</span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">单层方案（F1 系列：只读 H3 最后一层）</div>
+    <div class="flow">
+      <div class="node frozen"><b>H3 DiT 第 49 层（冻结）</b>最后一层的视频 token</div><div class="arrow">→</div>
+      <div class="node frozen"><b>H3 自带输出归一化</b>RMSNorm（H3 学到的逐通道权重）× (1 + scale<sub>t</sub>) + shift<sub>t</sub>，t = 0.8；即 H3 视频输出头读取的表示</div><div class="arrow">→</div>
+      <div class="node frozen"><b>（仅 F1d）逐通道标准化</b>对归一化后的特征再逐通道减均值、除标准差，截断 ±20；统计量取自 256 个训练窗口，固定不训练</div><div class="arrow">→</div>
+      <div class="node train"><b>1 个共享适配器</b>混合适配器，输出每帧 24×32×2048</div><div class="arrow">→</div>
+      <div class="node train"><b>4 个输出头</b>LayerNorm + 线性层（初始化为恒等），分别给 DPT 的 4 路输入</div><div class="arrow">→</div>
+      <div class="node frozen"><b>DPT 头 / 相机头</b>相机查询读共享适配器的输出，其余同上</div>
+    </div>
+  </figure>
+  <dl class="block">
+    <dt>混合适配器</dt><dd>一个 DiT token 对应 4 帧 × 2×2 个 16 像素的 patch，而 DPT 头要求每帧、每个 patch 都有自己的 token。混合适配器有两条路：<b>广播路径</b>把 token 线性映射到 2048 维，加上“第几帧、哪个子位置”的可学习编码，复制到这 16 个位置；<b>逐位置路径</b>让每一帧、每个子位置从 5376 维里读出自己的 256 维（单独占一个 latent 帧的第 0、17 帧用第 5 组），再经一个所有位置共享、零初始化的 256 → 2048 线性层，两路相加后过一个残差 MLP（2048 → 4096 → 2048）。只用广播路径时，同一个 latent 里的 4 帧几乎完全相同（A3 之前的问题）。</dd>
+    <dt>VGGT-Ω 教师监督</dt><dd>V1 系列开始使用（只在训练时用，推理不需要）：送进 DPT 的 4 路特征（多层方案是 4 个适配器的输出，单层方案是 4 个输出头）分别对齐 VGGT-Ω 第 4、11、17、23 层的 token。距离在 DPT 头自己的归一化和投影之后计算，并按 token 方差归一化，另加 0.25 倍的白化空间误差；相机查询的 17 个输出对齐 VGGT-Ω 最后一层的相机 token（权重 1）和 16 个寄存器 token（权重 0.25）。教师在某个窗口上自身误差较大（深度 &gt; 0.10 或旋转 &gt; 1°）时，该窗口的教师损失降到 0.3 倍。教师权重在训练前半程为 5，之后在 50%–80% 的进度内降到 1.5。V1a、V1c、V1d 用预先缓存的教师结果，每个窗口都有；在线计算教师的实验（F1、F2、F1c、F1d）每步只算 batch 里的 4 个窗口。</dd>
+    <dt>真值损失与训练</dt><dd>VGGT-Ω 的训练损失：相机、带置信度的深度（含梯度项）、由预测深度、预测外参和真值内参反投影的点云（整个训练都用真值内参；视场角激活改为直通梯度）。AdamW，适配器和相机查询学习率 5e-4，两个预训练头 1e-4，层混合权重 1e-2；前 100 步线性预热，从头训练时两个预训练头先冻结 300 步、再用 200 步线性放开；之后学习率保持不变，最后 20% 的步数线性衰减（WSD）；权重的指数滑动平均（EMA 0.999）单独评估。</dd>
+  </dl>
+  <figure>
+    <div class="fig-title">各实验的配置</div>
+    <div class="tbl"><table id="tblDxCfg"></table></div>
+    <figcaption>
+      <span><b>怎么看</b>每行一个实验，列出它和其他实验不同的地方。“窗口数”是训练集大小：256 个窗口是从全量 12,428 个窗口里均匀抽取的固定子集；全量是 TartanAir 训练场景中所有不重叠的 22 帧窗口（帧间隔 1 和 2）。</span>
+    </figcaption>
+  </figure>
+
+  <h3>256 个窗口上的逐步改进（A 系列、V1 系列）</h3>
+  <dl class="block">
+    <dt>为什么做</dt><dd>阶段 1 的 S1b 在全量数据上只训练到验证集旋转 3.9°，而且训练窗口和验证窗口差不多。在 256 个窗口上一次只改一处，每个实验 2000 步（batch 16，约 1.3–3.2 小时），能在小成本下找出解码器里真正起作用的设计。</dd>
+    <dt>怎么做</dt><dd>每一行在上一行的基础上只改一处（A4 是失败的尝试，后续没有保留；A6 的 RGB 分支几乎没有收益，但之后的实验沿用了它；V1b 在 A9 的基础上改读层）。所有实验的训练集、评估窗口都完全相同。</dd>
+  </dl>
+  <figure>
+    <div class="fig-title">256 个窗口：每一步改动后的最终结果（第 2000 步）</div>
+    <div class="tbl"><table id="tblDxLadder"></table></div>
+    <figcaption>
+      <span><b>做了什么</b>每个实验训练 2000 步后，在 64 个训练窗口、32 个 held-out 窗口和 32 个验证窗口上评估（未经 EMA 的权重）。深度为逐帧对齐的 AbsRel，旋转和平移方向为度。</span>
+      <span><b>怎么看</b>越低越好（AUC 越高越好）；held-out 和验证才反映泛化。最后两行是单层方案在同样 256 个窗口上的结果（都取第 4000 步，便于两者对比），起点是全量 F1 的第 3000 步权重，和上面各行不是同一个起点，仅作参照；而且这 32 个 held-out 窗口都在全量训练集里，F1 已经训练过约 6 遍，对这两行只有验证集反映泛化。</span>
+      <span id="dxLadderConcl"></span>
+    </figcaption>
+  </figure>
+
+  <h3>全量 TartanAir：多层方案（F2）与单层方案（F1）</h3>
+  <dl class="block">
+    <dt>为什么做</dt><dd>256 个窗口上的 V1 系列验证集深度约 0.146–0.156，有教师的 V1a、V1c、V1d 旋转约 2.6°。下一步看全量 12,428 个窗口的效果。F1 先跑：单层方案在 16 个窗口的过拟合测试中全面超过了 VGGT-Ω（见上一节），而且结构最简单。F1 在第 2000 步明显落后后，又跑了多层方案 F2 作对照。F2 采用 V1a 的结构（第 12/24/36/49 层、相机头 LayerScale 重新打开、带 RGB 分支），教师改为在线计算；没有用 V1b–V1d 的 6 层混合。</dd>
+    <dt>怎么做</dt><dd>两者都直接读全量特征缓存、在线计算 VGGT-Ω 教师。F2：batch 20，跑到第 2000 步。F1：第 0–2000 步 batch 24；之后改为 batch 28 从第 2000 步的权重继续训练到第 3000 步；再从第 3000 步继续（学习率 5e-4，计划 3000 步、最后 20% 衰减），目标第 6000 步（正在训练）。每次续训都重新预热学习率、重置优化器和 EMA，教师权重的日程也从头开始。每 1000 步（第 3000 步之后每 500 步）评估一次。注意：报告中所有全量结果都是在学习率衰减和教师权重衰减开始之前得到的（学习率 5e-4、教师权重 5）；当前这段的教师权重在第 4500 步、学习率在第 5400 步才开始衰减。256 个窗口的结果则是衰减结束后的第 2000 步。</dd>
+  </dl>
+  <figure>
+    <div class="fig-title">全量训练：验证集和训练窗口上的指标变化</div>
+    <div class="charts"><div class="chart" id="chDxFullDepth"></div><div class="chart" id="chDxFullCam"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>F1 把三段训练（第 0–2000、2000–3000、3000 步之后）连成一条曲线；F2 训练到第 2000 步。实线为 32 个验证窗口，虚线为 64 个训练窗口。</span>
+      <span><b>怎么看</b>越低越好，纵轴为对数刻度。灰色虚线横线：深度图为“线性读出”的结果，即只在 256 个窗口上对第 49 层特征拟合一个线性回归，在验证集上得到的深度误差（见下文诊断）；相机图为 VGGT-Ω 在验证集上的旋转误差。</span>
+      <span id="dxFullConcl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">全量训练的评估结果</div>
+    <div class="tbl"><table id="tblDxFull"></table></div>
+    <figcaption>
+      <span><b>怎么看</b>每行一次评估；“训练窗口”和“验证”两组分开列。F2 与 F1 在同样的 32 个验证窗口上逐窗口配对比较，结果见表下的结论。</span>
+      <span id="dxFullTblConcl"></span>
+    </figcaption>
+  </figure>
+
+  <h3>诊断：F1 为什么学不会</h3>
+  <dl class="block">
+    <dt>现象</dt><dd>F1 在全量数据上，训练窗口和验证集的误差几乎一样（第 3000 步 0.294 / 0.303），说明不是过拟合，而是连训练数据都学不进去；而同样的结构在 16 个窗口上能把训练误差降到 0.042。为了判断是“训练不够”还是另有原因，我们把 F1 第 3000 步的权重放到 256 个窗口上继续训练（F1c），并做了三项分析（每项分析的关键数字都用另一套独立编写的代码复现过）。</dd>
+  </dl>
+  <figure>
+    <div class="fig-title">分析 1：线性读出能达到多少（验证集）</div>
+    <div class="tbl"><table>
+      <tr><th>输入特征（只在 256 个窗口上拟合线性回归）</th><th>深度 AbsRel（逐帧）</th><th>token 级 AbsRel</th></tr>
+      <tr><td>第 49 层（每个通道先标准化）</td><td>0.263</td><td>0.213</td></tr>
+      <tr><td>第 49 层经 H3 输出归一化、不再标准化（正则系数 1e-4 时退化到 0.302 / 0.258）</td><td>0.268</td><td>0.218</td></tr>
+      <tr><td>第 36 层（标准化）</td><td><b>0.210</b></td><td><b>0.150</b></td></tr>
+      <tr><td>第 12/24/36/49 层拼接（标准化）</td><td>0.213</td><td>0.154</td></tr>
+      <tr class="sep"><td>F1 训练好的解码器（全量第 3000 步）</td><td>0.303</td><td>0.275</td></tr>
+      <tr><td>每个 token 都取真值平均深度（token 粒度的上限）</td><td>0.134</td><td>0.049</td></tr>
+    </table></div>
+    <figcaption>
+      <span><b>做了什么</b>对每个 DiT token 预测它覆盖区域的平均对数深度，用岭回归在 256 个训练窗口上拟合，再按解码器同样的方式（双线性放大到全分辨率、逐帧中位数对齐）在 32 个验证窗口上计算误差。正则强度在 held-out 窗口上选择。</span>
+      <span><b>怎么看</b>线性读出没有任何非线性和跨 token 的信息，只是一个下限参照；训练好的解码器理应比它好得多。</span>
+      <span><b>结论</b>F1 的解码器比对第 49 层特征做的线性读出还差（0.303 对 0.263，75–88% 的验证窗口上线性读出更好），说明它连特征里线性可读的深度都没有取出来。另外两点：用 512、1024 个窗口拟合，线性读出几乎不变（0.268、0.265），加数据对它没有帮助；第 49 层本身也不如第 36 层（0.263 对 0.210），4 层拼接并不比只用第 36 层好。</span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">分析 2：H3 输出归一化之后，各通道的数值尺度相差上千倍</div>
+    <div class="tbl"><table>
+      <tr><th>测量</th><th>结果</th></tr>
+      <tr><td>H3 输出归一化对各通道的放大系数</td><td style="white-space:normal">中位数 0.00057（约 1/1800），最大的 1% 在 1.5–2.2 之间：大部分通道被压小上千倍</td></tr>
+      <tr><td>F1 适配器对小尺度通道的依赖</td><td style="white-space:normal">把尺度最小的 3376 个通道全部换成均值，适配器第一层的输出只变 0.9%（随机初始化时为 0.4%），即这些通道基本没被用上</td></tr>
+      <tr><td>深度信息在哪些通道里（各取 658 个通道做线性读出，验证集 R²）</td><td style="white-space:normal">尺度最大的 658 个：0.14；随机 658 个：0.30–0.34；尺度最小的 658 个：0.45</td></tr>
+      <tr><td>模拟：用同样的特征训练一个小型网络预测 token 级深度（AdamW，3000 步）</td><td style="white-space:normal">直接读 H3 输出归一化后的特征：训练集 R² 0.999、验证集 0.19；先逐通道标准化：验证集 0.56；不标准化、学习率调大 10 倍：验证集 0.21</td></tr>
+    </table></div>
+    <figcaption>
+      <span><b>结论</b>H3 的输出归一化是为 96 维视频输出准备的，它把大部分通道压得很小，而深度信息有相当一部分恰恰在这些小通道里。AdamW 每一步对每个权重的改动幅度有上限，要让小上千倍的通道起作用，对应权重要放大几百到上千倍，几千步内做不到；而尺度大的通道很容易区分不同窗口，足以“背下”训练数据。这解释了 16 个窗口能过拟合、全量却学不会。线性读出的对比也说明了这一点：精确求解的线性回归不受通道尺度影响（0.268，与标准化后相当），但只要加一点正则（作用类似权重衰减），就退化到与 F1 相同的 0.302。</span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">分析 3：256 个窗口上的对照实验——F1c（原输入）与 F1d（输入逐通道标准化）</div>
+    <div class="charts"><div class="chart" id="chDxCD"></div><div class="chart" id="chDxCDtrain"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>两个实验都从全量 F1 第 3000 步的权重开始，在同样 256 个窗口上训练（batch 28），每 250 步评估一次。唯一的区别：F1d 对 H3 输出归一化之后的特征再做逐通道标准化，并把标准化参数等价地折算进适配器第一层的权重，因此起点的模型输出与 F1c 几乎相同（第 3000 步的深度指标完全一致，旋转误差相差不到 0.01°）。F1c 跑完 1500 步；F1d 跑到第 4000 步后停止。注意 held-out 窗口在全量训练集里，起点权重已经训练过它们约 6 遍，所以这里只有验证集反映泛化。</span>
+      <span><b>怎么看</b>橙色为 F1c，蓝色为 F1d。左图：验证集（实线）和 held-out（虚线），灰色横线为线性读出和多层方案 V1d 的验证集结果；右图：被训练的窗口。越低越好。</span>
+      <span id="dxCDConcl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">F1d 相对 F1c 的逐窗口配对差异（F1d − F1c，负数表示 F1d 更好）</div>
+    <div class="tbl"><table id="tblDxCD"></table></div>
+    <figcaption>
+      <span><b>怎么看</b>每格为 32 个（训练窗口为 64 个）窗口的平均差异，括号内为 95% bootstrap 置信区间；“更好”为 F1d 更好的窗口比例。置信区间不包含 0 时加粗。</span>
+    </figcaption>
+  </figure>
+
+  <h3>可视化：验证集上的深度</h3>
+  <div class="prose"><p>四个验证窗口（训练从未见过的场景），每张图四行为第 0、7、14、21 帧。列从左到右：输入 RGB、真值深度、F1（全量，最新一次评估）、F1d（256 个窗口，第 4000 步）、F2（全量，第 2000 步）、VGGT-Ω。深度按逆深度着色（暖色近），各列共用取自真值的色标；VGGT-Ω 整段乘一个系数对齐到真值的中位数深度。</p></div>
+  <div class="colhead" style="--cols:6;margin-top:8px"><span>RGB</span><span>真值</span><span id="dxColF1">F1 全量</span><span>F1d（256）</span><span>F2 全量</span><span>VGGT-Ω</span></div>
+  <div id="dxVis"></div>
+  <div class="note" id="dxConcl"><b>结论与下一步</b>加载中。</div>
+</section>
+
 <section id="ablations">
   <h2>消融实验计划</h2>
   <div class="prose"><p>当前的 B1 是基线：干净读出（t = 1）、读第 12/24/36/49 层、真值 + 教师蒸馏、DiT 加 LoRA、有效深度 0.05–200 m。下面每个消融只改一处，其余与 B1 相同，便于把差异归因到这一处改动。B1 跑完前不启动，避免抢占 GPU。</p></div>
@@ -711,7 +1114,7 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
     </dd>
   </dl>
   <ul class="prose" id="nextList">
-    <li>B1 已按决定在第 5000 步停止；后续训练计划（是否继续 B1、B2 的设置、消融顺序）讨论后再定，目前没有启动新的训练。</li>
+    <li>B1 已按决定在第 5000 步停止；后续训练计划（是否继续 B1、B2 的设置、消融顺序）讨论后再定（之后的工作见 G1、阶段 1 和解码器探索各节）。</li>
     <li>消融建议优先 X1、X3（改动小，能回答蒸馏和户外段的问题），再 X2。</li>
     <li>RGB 生成目前完全没有运行过。要验证 RGB 不受影响，需要在 RGB 生成时关闭几何分支的 LoRA（尚未实现），并对比生成质量。</li>
     <li>速度：VAE 编码占 35% 时间，可以预先缓存潜变量（需要改成固定窗口采样）。</li>
@@ -739,6 +1142,7 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
 <script>
 (function () {
   const R = window.REPORT || {};
+  const G1_STOPPED_AT = 2000;  // G1s_full stopped after its step-2000 evaluation
   const $ = (id) => document.getElementById(id);
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
   const f3 = (x) => (x == null || isNaN(x)) ? "–" : (+x).toFixed(3);
@@ -815,8 +1219,11 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
   $("chips").innerHTML = [
     `<span class="chip good">阶段 A 已完成</span>`,
     B1 ? (B1done ? `<span class="chip good">阶段 B（B1）已完成 · 第 ${B1done.step} 步</span>` : `<span class="chip live">阶段 B 进行中 · ${(100 * done / totalSteps).toFixed(1)}%</span>`) : "",
-    R.g1 ? `<span class="chip live">G1 联合生成进行中 · 第 ${(R.g1.last_step + 1).toLocaleString()} / ${((R.g1.args || {}).steps || 10000).toLocaleString()} 步</span>` : "",
-    R.g1 && R.g1.last_time ? `<span class="chip">数据截至 ${esc(R.g1.last_time.replace("T", " "))} UTC</span>` : B1 ? `<span class="chip">数据截至 ${esc(B1.last_time.replace("T", " "))} UTC</span>` : "",].join("");
+    R.g1 ? (G1_STOPPED_AT ? `<span class="chip warn">G1 联合生成 · 已在第 ${G1_STOPPED_AT.toLocaleString()} 步停止，问题已定位</span>` : `<span class="chip live">G1 联合生成进行中 · 第 ${(R.g1.last_step + 1).toLocaleString()} / ${((R.g1.args || {}).steps || 10000).toLocaleString()} 步</span>`) : "",
+    R.g1 && R.g1.last_time ? `<span class="chip">数据截至 ${esc(R.g1.last_time.replace("T", " "))} UTC</span>` : B1 ? `<span class="chip">数据截至 ${esc(B1.last_time.replace("T", " "))} UTC</span>` : "",
+    R.runs && R.runs.OF_normout ? `<span class="chip good">解码器简化 · 最后一层过拟合测试完成</span>` : "",
+    R.decx && R.decx.runs ? `<span class="chip live">解码器探索 · F1 全量续训中（已评估到第 ${R.decx.f1b_last} 步）</span>` : "",
+    R.runs && R.runs.S1b_full_frozen ? `<span class="chip live">阶段 1（S1b 全量）${R.runs.S1b_full_frozen.done ? "已完成" : "训练中 · 第 " + (R.runs.S1b_full_frozen.last_step + 1).toLocaleString() + " 步"}</span>` : "",].join("");
   const a1 = A1 ? last(A1.evals.train) : {}, a2 = A2 ? last(A2.evals.train) : {}, a3 = A3 ? last(A3.evals.train) : {};
   const a2v = A2 ? last(A2.evals.val) : {}, a3v = A3 ? last(A3.evals.val) : {};
   const cards = [
@@ -828,7 +1235,11 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
     B1 && bVal ? ["F5 · 全量训练稳定下降", `验证 AbsRel ${f3(bVal0.absrel_frame)} → ${f3(bVal.absrel_frame)}（第 ${bVal.step} 步）`, `旋转误差 ${deg(bVal0.rot_err_med)} → ${deg(bVal.rot_err_med)}；常数基线 ${f3(bVal.const_absrel_raw)}，教师 ${f3(bVal.teacher_absrel_frame)}。`] : null,
     (() => { const G = R.g1, rv = G && G.evals && G.evals.recon || [], r0 = rv[0], r1 = rv[rv.length - 1];
       return r1 && r1.step > 0 ? ["F6 · G1 联合生成（第 " + r1.step + " 步）", `重建模式深度 AbsRel ${f3(r0.depth_absrel_frame)} → ${f3(r1.depth_absrel_frame)}，相机旋转 ${deg(r1.rot_err_med)}`,
-        `深度在正常学习；相机平移方向误差 ${deg(r1.trans_dir_err_med)}（随机为 90°），相机分支还没学会从 RGB 读运动，原因与修正见 G1 一节。RGB 与 H3 完全一致。`] : null; })(),
+        `相机旋转误差 ${deg(r1.rot_err_med)}、平移方向误差 ${deg(r1.trans_dir_err_med)}（随机为 90°）。深度形状在第 1000 步后基本持平（平均值上升来自 1 个异常片段），尺度不稳；训练损失显示相机分支仍没有利用干净的 RGB。已在第 2000 步停止，详见 G1 一节。RGB 与 H3 完全一致。`] : null; })(),
+    (() => { const r = R.runs && R.runs.S1a_of8_frozen; const e = r && r.evals.train; const L = e && e[e.length - 1];
+      const rb = R.runs && R.runs.S1b_full_frozen, vb = rb && (rb.evals.val || []).slice(-1)[0];
+      return L ? ["F7 · 阶段 1：小数据能背下，全量数据不够", `8 段：旋转 ${deg(L.rot_err_med)} vs VGGT-Ω ${deg(L.teacher_rot_err_med)}` + (vb ? `；全量验证：${deg(vb.rot_err_med)} vs ${deg(vb.teacher_rot_err_med)}` : ""),
+        `冻结 H3、只训练读 DiT 特征的几何解码器：8 个窗口约 1 小时全面超过 VGGT-Ω，生成和重建两条路都跑通；但全量 TartanAir 上处于泛化状态，精度明显低于 VGGT-Ω 和 B1，需要放开 DiT 或加强解码器（见“阶段 1”一节）。`] : null; })(),
   ].filter(Boolean);
   $("summaryCards").innerHTML = cards.map(([t, b, p]) => `<div class="finding"><span class="tag">${esc(t)}</span><b>${esc(b)}</b><p>${esc(p)}</p></div>`).join("");
 
@@ -948,7 +1359,8 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
     const A = G1.args || {}, bs = G1.batch;
     const tot = A.steps || 10000, done = G1.last_step ? G1.last_step + 1 : 0;
     $("g1Prog").style.width = (100 * done / tot).toFixed(1) + "%";
-    $("g1Status").innerHTML = done ? `训练中：第 ${done.toLocaleString()} / ${tot.toLocaleString()} 步，batch ${bs ? bs.batch : "–"}，每步约 ${f2(G1.sec_per_step)} s（数据截至 ${esc((G1.last_time || "").replace("T", " "))} UTC）。` : "已启动，等待第一次评估。";
+    if (G1_STOPPED_AT) $("g1Status").innerHTML = `已停止：按计划在第 ${G1_STOPPED_AT.toLocaleString()} 步（约 ${(G1_STOPPED_AT * (bs ? bs.batch : 12)).toLocaleString()} 个训练片段，约 18 小时）评估后停止，用于评估结果和安排后续实验；第 ${G1_STOPPED_AT.toLocaleString()} 步的检查点已保存。batch ${bs ? bs.batch : "–"}，每步约 ${f2(G1.sec_per_step)} s。`;
+    else $("g1Status").innerHTML = done ? `训练中：第 ${done.toLocaleString()} / ${tot.toLocaleString()} 步，batch ${bs ? bs.batch : "–"}，每步约 ${f2(G1.sec_per_step)} s（数据截至 ${esc((G1.last_time || "").replace("T", " "))} UTC）。` : "已启动，等待第一次评估。";
     const T = G1.test, TS = G1.test_seq;
     if (TS) $("tblG1Test").innerHTML = `<tr><th>检查</th><th>结果</th><th>说明</th></tr>
       <tr><td>加入深度 / raymap token 后的 RGB 输出 vs H3 官方前向</td><td>最大误差 ${TS.rgb_with_geo_tokens_vs_official_maxabs_and_scale.map((x) => x[0]).join(" / ")}</td><td style="text-align:left;white-space:normal">单向注意力下 RGB 分支与 H3 逐位一致</td></tr>
@@ -1068,6 +1480,330 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
     const li = iv[iv.length - 1], lr = rv[rv.length - 1];
     $("g1Concl").innerHTML = li && li.step > 0 ? `<b>目前</b>第 ${li.step} 步：单图生成的深度与 VGGT-Ω 估计的差异 AbsRel ${f3(li.vs_vggt_absrel_frame)}、旋转 ${deg(li.vs_vggt_rot_err_med)}；重建模式深度 AbsRel ${f3(lr && lr.depth_absrel_frame)}、旋转 ${deg(lr && lr.rot_err_med)}。` : "";
   }
+
+  // ---------------------------------------------------------------- stage 1 (frozen H3 + geometry decoder)
+  const S1a = runs.S1a_of8_frozen, S1b = runs.S1b_full_frozen;
+  if (S1a && (S1a.evals.train || []).length) {
+    const et = S1a.evals.train, ev = S1a.evals.val || [], L = et[et.length - 1], Lv = ev[ev.length - 1] || {};
+    lineChart($("chS1aDepth"), { title: "深度 AbsRel（逐帧对齐）", yLabel: "AbsRel", log: true, xMin: 0, series: [
+      { name: "训练 8 段", color: "--s2", points: et.map((e) => [e.step, e.absrel_frame]) },
+      { name: "验证 2 段", color: "--s1", dash: true, points: ev.map((e) => [e.step, e.absrel_frame]) }],
+      refs: [{ y: L.teacher_absrel_frame, label: "VGGT-Ω 训练段 " + f3(L.teacher_absrel_frame) },
+             { y: Lv.teacher_absrel_frame, label: "VGGT-Ω 验证段 " + f3(Lv.teacher_absrel_frame) }] });
+    lineChart($("chS1aCam"), { title: "相机误差（训练 8 段）", yLabel: "度", log: true, xMin: 0, series: [
+      { name: "旋转误差", color: "--s3", points: et.map((e) => [e.step, e.rot_err_med]) },
+      { name: "平移方向误差", color: "--s4", points: et.map((e) => [e.step, e.trans_dir_err_med]) }],
+      refs: [{ y: L.teacher_rot_err_med, label: "VGGT-Ω 旋转 " + deg(L.teacher_rot_err_med) },
+             { y: L.teacher_trans_dir_err_med, label: "VGGT-Ω 平移方向 " + deg(L.teacher_trans_dir_err_med) }] });
+    const cross = (k, tk) => { const e = et.find((x) => x[k] < x[tk]); return e ? e.step : null; };
+    const cr = cross("rot_err_med", "teacher_rot_err_med"), ct = cross("trans_dir_err_med", "teacher_trans_dir_err_med"),
+      cd = cross("absrel_frame", "teacher_absrel_frame");
+    $("s1aChartConcl").innerHTML = `<b>结论</b>深度在第 ${cd ?? "–"} 步、平移方向在第 ${ct ?? "–"} 步、旋转在第 ${cr ?? "–"} 步降到 VGGT-Ω 以下，之后继续下降。验证段（虚线）基本不随训练改善，说明 8 段数据只够“背下来”。`;
+    const wins = [L.absrel_frame < L.teacher_absrel_frame, L.rot_err_med < L.teacher_rot_err_med,
+                  L.trans_dir_err_med < L.teacher_trans_dir_err_med, L.auc30 > L.teacher_auc30].filter(Boolean).length;
+    $("s1aConcl").innerHTML = `第 ${L.step} 步，8 个训练片段平均：深度 AbsRel ${f3(L.absrel_frame)}（VGGT-Ω ${f3(L.teacher_absrel_frame)}），旋转误差 ${deg(L.rot_err_med)}（${deg(L.teacher_rot_err_med)}），平移方向误差 ${deg(L.trans_dir_err_med)}（${deg(L.teacher_trans_dir_err_med)}），AUC@30 ${f3(L.auc30)}（${f3(L.teacher_auc30)}）；4 项中 ${wins} 项优于 VGGT-Ω。<b>通过</b>：这套训练流程能在约 1 小时内把训练数据拟合到超过 VGGT-Ω 的水平，可以进入全量训练。`;
+    const cl = S1a.clips_final || [];
+    const cell = (ours, ref, lower, fmt) => `<td class="${(lower ? ours < ref : ours > ref) ? "best" : ""}">${fmt(ours)}</td><td>${fmt(ref)}</td>`;
+    let h = `<tr><th>片段</th><th>集合</th><th>深度 我们</th><th>深度 VGGT-Ω</th><th>深度 原始（我们）</th><th>旋转 我们</th><th>旋转 VGGT-Ω</th><th>平移方向 我们</th><th>平移方向 VGGT-Ω</th><th>AUC@30 我们</th><th>AUC@30 VGGT-Ω</th></tr>`;
+    for (const split of ["train", "val"]) {
+      const rows = cl.filter((r) => r.split === split);
+      rows.forEach((r, i) => {
+        h += `<tr${i === 0 && split === "val" ? ' class="sep"' : ""}><td style="text-align:left">${esc(r.clip)}</td><td>${split === "train" ? "训练" : "验证"}</td>` +
+          cell(r.absrel_frame, r.teacher_absrel_frame, true, f3) + `<td>${f3(r.absrel_raw)}</td>` +
+          cell(r.rot_err_med, r.teacher_rot_err_med, true, deg) + cell(r.trans_dir_err_med, r.teacher_trans_dir_err_med, true, deg) +
+          cell(r.auc30, r.teacher_auc30, false, f3) + `</tr>`;
+      });
+    }
+    $("tblS1aClips").innerHTML = h;
+  }
+  if (S1b) {
+    const tot = (S1b.args || {}).steps || 15000, done = S1b.done ? S1b.done.step : S1b.last_step + 1;
+    const et = (S1b.evals || {}).train || [], ev = (S1b.evals || {}).val || [], L = et[et.length - 1], Lv = ev[ev.length - 1];
+    let st = S1b.done ? `已完成 ${tot.toLocaleString()} 步。` : `训练中：第 ${done.toLocaleString()} / ${tot.toLocaleString()} 步，每步约 ${f2(S1b.sec_per_step)} s（数据截至 ${esc((S1b.last_time || "").replace("T", " "))} UTC）。`;
+    if (S1b.data) st += `训练窗口池 ${S1b.data.pool_windows.toLocaleString()} 个。`;
+    if (L && Lv && L.step > 0) st += ` 第 ${L.step} 步：训练窗口深度 ${f3(L.absrel_frame)}（VGGT-Ω ${f3(L.teacher_absrel_frame)}）、旋转 ${deg(L.rot_err_med)}（${deg(L.teacher_rot_err_med)}）；验证窗口深度 ${f3(Lv.absrel_frame)}（${f3(Lv.teacher_absrel_frame)}）、旋转 ${deg(Lv.rot_err_med)}（${deg(Lv.teacher_rot_err_med)}）。`;
+    else if (L) st += ` 第 0 步参照：VGGT-Ω 在 16 个训练窗口上深度 ${f3(L.teacher_absrel_frame)}、旋转 ${deg(L.teacher_rot_err_med)}、AUC@30 ${f3(L.teacher_auc30)}；在 32 个验证窗口上深度 ${f3(Lv.teacher_absrel_frame)}、旋转 ${deg(Lv.teacher_rot_err_med)}、AUC@30 ${f3(Lv.teacher_auc30)}。`;
+    $("s1bStatus").innerHTML = st;
+  }
+
+  if (S1b && ((S1b.evals || {}).train || []).length > 1) {
+    const et = S1b.evals.train, ev = S1b.evals.val || [], L = et[et.length - 1], Lv = ev[ev.length - 1];
+    lineChart($("chS1bDepth"), { title: "深度 AbsRel（逐帧对齐）", yLabel: "AbsRel", log: true, xMin: 0, series: [
+      { name: "训练窗口", color: "--s2", points: et.map((e) => [e.step, e.absrel_frame]) },
+      { name: "验证窗口", color: "--s2", dash: true, points: ev.map((e) => [e.step, e.absrel_frame]) }],
+      refs: [{ y: L.teacher_absrel_frame, label: "VGGT-Ω 训练窗口 " + f3(L.teacher_absrel_frame) },
+             { y: Lv.teacher_absrel_frame, label: "VGGT-Ω 验证窗口 " + f3(Lv.teacher_absrel_frame) }] });
+    lineChart($("chS1bCam"), { title: "相机误差", yLabel: "度", log: true, xMin: 0, series: [
+      { name: "旋转 · 训练", color: "--s3", points: et.map((e) => [e.step, e.rot_err_med]) },
+      { name: "旋转 · 验证", color: "--s3", dash: true, points: ev.map((e) => [e.step, e.rot_err_med]) },
+      { name: "平移方向 · 训练", color: "--s4", points: et.map((e) => [e.step, e.trans_dir_err_med]) },
+      { name: "平移方向 · 验证", color: "--s4", dash: true, points: ev.map((e) => [e.step, e.trans_dir_err_med]) }],
+      refs: [{ y: L.teacher_rot_err_med, label: "VGGT-Ω 旋转 " + deg(L.teacher_rot_err_med) },
+             { y: L.teacher_trans_dir_err_med, label: "VGGT-Ω 平移方向 " + deg(L.teacher_trans_dir_err_med) }] });
+    const e8 = et.find((e) => e.step === 8000) || et[Math.floor(et.length / 2)];
+    $("s1bChartConcl").innerHTML = `<b>结论</b>全程都在变好（训练窗口旋转 ${deg(e8.rot_err_med)} → ${deg(L.rot_err_med)}，平移方向 ${deg(e8.trans_dir_err_med)} → ${deg(L.trans_dir_err_med)}，第 ${e8.step} → ${L.step} 步），但离 VGGT-Ω 很远；训练窗口和验证窗口的曲线基本贴在一起，说明 10 轮下来模型没有“背下”训练数据，而是在学一个通用映射。`;
+    const b1v = (runs.B1_full_lora && runs.B1_full_lora.evals.val || []);
+    const B = b1v.find((e) => e.step === 5000) || b1v[b1v.length - 1] || {};
+    const row = (lab, k, fmt) => `<tr><td style="text-align:left">${lab}</td><td>${fmt(L[k])}</td><td>${fmt(L["teacher_" + k])}</td><td>${fmt(Lv[k])}</td><td>${fmt(Lv["teacher_" + k])}</td><td>${fmt(B[k])}</td></tr>`;
+    $("tblS1bFinal").innerHTML = `<tr><th>第 ${L.step} 步</th><th>S1b 训练窗口</th><th>VGGT-Ω</th><th>S1b 验证窗口</th><th>VGGT-Ω</th><th>B1 第 ${B.step} 步（验证）</th></tr>` +
+      row("深度 AbsRel（逐帧对齐）", "absrel_frame", f3) + row("旋转误差", "rot_err_med", deg) + row("平移方向误差", "trans_dir_err_med", deg) +
+      row("旋转 &lt; 5° 比例", "rra5", f3) + row("AUC@30", "auc30", f3);
+    $("s1bFinalConcl").innerHTML = `<b>结论</b>验证窗口上 S1b 与 VGGT-Ω 差距很大（深度 ${f3(Lv.absrel_frame)} vs ${f3(Lv.teacher_absrel_frame)}，旋转 ${deg(Lv.rot_err_med)} vs ${deg(Lv.teacher_rot_err_med)}），也明显不如 B1（${f3(B.absrel_frame)}、${deg(B.rot_err_med)}），尽管训练量是 B1 的 3 倍多。冻结 DiT 后只训练解码器，全量数据上达不到目标。`;
+  }
+  const S1c = runs.S1c_mem256;
+  if (S1c && ((S1c.evals || {}).train || []).length > 1) {
+    const et = S1c.evals.train, ev = S1c.evals.val || [], L = et[et.length - 1], Lv = ev[ev.length - 1];
+    lineChart($("chS1cDepth"), { title: "深度 AbsRel（逐帧对齐）", yLabel: "AbsRel", log: true, xMin: 0, series: [
+      { name: "训练窗口（被记忆）", color: "--s2", points: et.map((e) => [e.step, e.absrel_frame]) },
+      { name: "验证窗口", color: "--s2", dash: true, points: ev.map((e) => [e.step, e.absrel_frame]) }],
+      refs: [{ y: L.teacher_absrel_frame, label: "VGGT-Ω " + f3(L.teacher_absrel_frame) }] });
+    lineChart($("chS1cCam"), { title: "相机误差", yLabel: "度", log: true, xMin: 0, series: [
+      { name: "旋转 · 训练", color: "--s3", points: et.map((e) => [e.step, e.rot_err_med]) },
+      { name: "旋转 · 验证", color: "--s3", dash: true, points: ev.map((e) => [e.step, e.rot_err_med]) },
+      { name: "平移方向 · 训练", color: "--s4", points: et.map((e) => [e.step, e.trans_dir_err_med]) }],
+      refs: [{ y: L.teacher_rot_err_med, label: "VGGT-Ω 旋转 " + deg(L.teacher_rot_err_med) },
+             { y: L.teacher_trans_dir_err_med, label: "VGGT-Ω 平移方向 " + deg(L.teacher_trans_dir_err_med) }] });
+    $("s1cConcl").innerHTML = `<b>结论</b>被记忆的窗口持续变好：第 ${L.step} 步深度 ${f3(L.absrel_frame)}（VGGT-Ω ${f3(L.teacher_absrel_frame)}），旋转 ${deg(L.rot_err_med)}（${deg(L.teacher_rot_err_med)}），平移方向 ${deg(L.trans_dir_err_med)}（${deg(L.teacher_trans_dir_err_med)}），AUC@30 ${f3(L.auc30)}（${f3(L.teacher_auc30)}）；学习率退火结束时仍在下降，还没到 VGGT-Ω。验证窗口则比 S1b 更差（旋转 ${deg(Lv.rot_err_med)}），这是只学 256 个窗口的记忆状态。`;
+    const S1aL = S1a ? S1a.evals.train[S1a.evals.train.length - 1] : null, S1bL = S1b ? S1b.evals.train[S1b.evals.train.length - 1] : null;
+    const S1bV = S1b ? (S1b.evals.val || []).slice(-1)[0] : null;
+    const sr = (lab, n, steps, x, v) => x ? `<tr><td style="text-align:left">${lab}</td><td>${n.toLocaleString()}</td><td>${steps.toLocaleString()}</td><td>${(steps * 8 / n).toFixed(n > 1000 ? 1 : 0)}</td>` +
+      `<td class="${x.absrel_frame < x.teacher_absrel_frame ? "best" : ""}">${f3(x.absrel_frame)}</td><td>${f3(x.teacher_absrel_frame)}</td>` +
+      `<td class="${x.rot_err_med < x.teacher_rot_err_med ? "best" : ""}">${deg(x.rot_err_med)}</td><td>${deg(x.teacher_rot_err_med)}</td>` +
+      `<td class="${x.trans_dir_err_med < x.teacher_trans_dir_err_med ? "best" : ""}">${deg(x.trans_dir_err_med)}</td><td>${deg(x.teacher_trans_dir_err_med)}</td><td>${v ? deg(v.rot_err_med) : "–"}</td></tr>` : "";
+    $("tblS1Scale").innerHTML = `<tr><th>实验</th><th>训练窗口数</th><th>步数</th><th>每窗口训练次数</th><th>深度（训练窗口）</th><th>VGGT-Ω</th><th>旋转（训练窗口）</th><th>VGGT-Ω</th><th>平移方向（训练窗口）</th><th>VGGT-Ω</th><th>旋转（验证窗口）</th></tr>` +
+      sr("S1a", 8, 1500, S1aL, S1a && (S1a.evals.val || []).slice(-1)[0]) + sr("S1c", 256, 2000, L, Lv) + sr("S1b", 12428, 15000, S1bL, S1bV);
+  }
+  const SG = R.s1_gen;
+  if (SG) {
+    const ro = SG.recon_ours, rv = SG.recon_vggt, g = SG.gen;
+    $("tblS1Gen").innerHTML = `<tr><th>模式</th><th>比较对象</th><th>深度 AbsRel（逐帧）</th><th>旋转误差</th><th>平移方向误差</th><th>AUC@30</th><th>说明</th></tr>
+      <tr><td>重建</td><td style="text-align:left">我们 vs 真值</td><td>${f3(ro.absrel_frame)}</td><td>${deg(ro.rot_err_med)}</td><td>${deg(ro.trans_dir_err_med)}</td><td>${f3(ro.auc30)}</td><td style="text-align:left;white-space:normal">同样 8 个验证窗口</td></tr>
+      <tr><td>重建</td><td style="text-align:left">VGGT-Ω vs 真值</td><td>${f3(rv.absrel_frame)}</td><td>${deg(rv.rot_err_med)}</td><td>${deg(rv.trans_dir_err_med)}</td><td>${f3(rv.auc30)}</td><td style="text-align:left;white-space:normal">参照</td></tr>
+      <tr class="sep"><td>生成</td><td style="text-align:left">我们 vs VGGT-Ω（在生成视频上）</td><td>${f3(g.cons_depth_absrel_frame)}</td><td>${deg(g.cons_rot_err_med)}</td><td>${deg(g.cons_trans_dir_err_med)}</td><td>${f3(g.cons_auc30)}</td><td style="text-align:left;white-space:normal">几何一致性：生成的视频没有真值</td></tr>
+      <tr><td>生成</td><td style="text-align:left">第 0 帧深度 vs 真值</td><td>${f3(g.f0_absrel_frame)}</td><td>–</td><td>–</td><td>–</td><td style="text-align:left;white-space:normal">VGGT-Ω 在生成视频第 0 帧上为 ${f3(g.vggt_f0_absrel_frame)}</td></tr>
+      <tr><td>生成</td><td style="text-align:left">生成视频本身</td><td colspan="4">每帧光流 ${f2(g.flow_per_frame)} px，第 0 帧 PSNR ${f2(g.f0_psnr)} dB</td><td style="text-align:left;white-space:normal">镜头在动（G1 全零文本时只有 1.2 px）</td></tr>`;
+  }
+  if (S1b && S1c) {
+    $("s1Next").innerHTML = `<b>阶段 1 的结论与下一步</b>
+      <p style="margin:6px 0 0">① 训练基础设施本身是通的：8 个窗口约 1 小时全面超过 VGGT-Ω；生成和重建两条路都能跑通，生成视频会动、解码出的深度没有块状纹理，几何与 VGGT-Ω 在生成视频上的估计基本一致。</p>
+      <p style="margin:6px 0 0">② “冻结 H3、只训练解码器就能很快把 TartanAir 拟合到 VGGT-Ω 水平”这一假设在全量数据上不成立：记忆需要每个窗口被训练很多次（8 个窗口约 1500 次），全量数据在现实训练量下处于泛化状态，精度受限于冻结特征加解码器（验证窗口旋转 3.9°，B1 有 LoRA 时 1.6°，VGGT-Ω 0.18°）。</p>
+      <p style="margin:6px 0 0">③ 可选方向：(a) 放开 DiT（先加 LoRA，即提前进入第二阶段的一部分），B1 已经证明 LoRA 在同样数据上明显更好；(b) DiT 保持冻结，加强解码器（在头部前加几层跨帧 transformer，让相机能在解码器里做帧间对应），并调大学习率、训练更久；(c) 两者结合。教师特征按当前决定暂不考虑。</p>`;
+  }
+  // ---------------------------------------------------------------- decoder simplification: last H3 block + H3's own output norm (overfit test)
+  const OF = runs.OF_normout;
+  if (OF && ((OF.evals || {}).train || []).length) {
+    const et = OF.evals.train, eh = OF.evals.held || [], evv = OF.evals.val || [];
+    const L = et[et.length - 1], Lh = eh[eh.length - 1] || {}, Lv = evv[evv.length - 1] || {};
+    const P = (arr, k) => arr.map((e) => [e.step, e[k]]);
+    lineChart($("chOFDepth"), { title: "深度 AbsRel（逐帧对齐）", yLabel: "AbsRel", log: true, xMin: 0, series: [
+      { name: "16 个训练窗口", color: "--s2", points: P(et, "absrel_frame") },
+      { name: "held-out 窗口", color: "--s1", dash: true, points: P(eh, "absrel_frame") },
+      { name: "验证窗口", color: "--s7", dash: true, points: P(evv, "absrel_frame") }],
+      refs: [{ y: L.teacher_absrel_frame, label: "VGGT-Ω " + f3(L.teacher_absrel_frame) }] });
+    lineChart($("chOFCam"), { title: "相机误差", yLabel: "度", log: true, xMin: 0, series: [
+      { name: "旋转 · 训练", color: "--s3", points: P(et, "rot_err_med") },
+      { name: "平移方向 · 训练", color: "--s4", points: P(et, "trans_dir_err_med") },
+      { name: "旋转 · held-out", color: "--s3", dash: true, points: P(eh, "rot_err_med") },
+      { name: "平移方向 · held-out", color: "--s4", dash: true, points: P(eh, "trans_dir_err_med") }],
+      refs: [{ y: L.teacher_rot_err_med, label: "VGGT-Ω 旋转 " + deg(L.teacher_rot_err_med) },
+             { y: L.teacher_trans_dir_err_med, label: "VGGT-Ω 平移方向 " + deg(L.teacher_trans_dir_err_med) }] });
+    $("ofChartConcl").innerHTML = `<b>结论</b>训练窗口上，深度在第 300 步就已低于 VGGT-Ω；相机误差在学习率最后 20% 的衰减阶段才明显下降，第 1200 步旋转和平移方向都降到 VGGT-Ω 以下。没训练过的窗口在第 300 步之后几乎不动，是只学 16 个窗口的记忆状态。`;
+    const better = (k, a, b) => (a == null || b == null) ? "" : ((k === "auc30" ? a > b : a < b) ? "best" : "");
+    const cell = (x, k, fmt) => `<td class="${better(k, x[k], x["teacher_" + k])}">${fmt(x[k])}</td><td>${fmt(x["teacher_" + k])}</td>`;
+    const row = (lab, k, fmt) => `<tr><td style="text-align:left">${lab}</td>${cell(L, k, fmt)}${cell(Lh, k, fmt)}${cell(Lv, k, fmt)}</tr>`;
+    $("tblOF").innerHTML = `<tr><th rowspan="2">第 ${L.step} 步</th><th colspan="2">16 个训练窗口</th><th colspan="2">held-out（32）</th><th colspan="2">验证（32）</th></tr>` +
+      `<tr><th>我们</th><th>VGGT-Ω</th><th>我们</th><th>VGGT-Ω</th><th>我们</th><th>VGGT-Ω</th></tr>` +
+      row("深度 AbsRel（逐帧对齐）", "absrel_frame", f3) + row("旋转误差", "rot_err_med", deg) + row("平移方向误差", "trans_dir_err_med", deg) + row("AUC@30", "auc30", f3);
+    $("ofConcl").innerHTML = `<b>结论与下一步</b>
+      <p style="margin:6px 0 0">① 表达能力没有问题：在 16 个训练窗口上，深度 ${f3(L.absrel_frame)}（VGGT-Ω ${f3(L.teacher_absrel_frame)}），旋转 ${deg(L.rot_err_med)}（${deg(L.teacher_rot_err_med)}），平移方向 ${deg(L.trans_dir_err_med)}（${deg(L.teacher_trans_dir_err_med)}），AUC@30 ${f3(L.auc30)}（${f3(L.teacher_auc30)}），全面超过 VGGT-Ω。只用 H3 最后一层、并经过 H3 自己的归一化（其中部分通道被缩放到接近 0），并没有限制解码器的拟合能力。可视化里训练窗口的深度边缘甚至比 VGGT-Ω 更锐利；把 22 帧反投影成点云后，点与真值的中位距离只有场景半径的 0.1%–0.7%（VGGT-Ω 为 0.7%–21.6%），说明深度和相机都拟合得很准。</p>
+      <p style="margin:6px 0 0">② 泛化无法从这个测试判断：只用 16 个窗口训练，没见过的窗口上深度约 ${f3(Lh.absrel_frame)}、平移方向约 ${deg(Lh.trans_dir_err_med)}，接近随机，这是预期之内的记忆状态，不代表特征有问题（此前 256 个窗口的实验在没见过的窗口上都有明显泛化）。</p>
+      <p style="margin:6px 0 0">③ 下一步：用同样的结构在 256 个窗口上训练（与此前最好的多层解码器 V1d 完全相同的设置，2000 步），按窗口配对比较 held-out 和验证集，量化“只用最后一层”的泛化代价（V1d：held-out 深度 0.148、旋转 3.20°；验证 0.146、2.56°）。原计划的对照组（同结构改用逐通道标准化）在 16 个窗口下两者都会拟合到很好、又都不泛化，区分不出差别，暂不运行。</p>`;
+  }
+  // ---------------------------------------------------------------- frozen-DiT decoder exploration (256-window ladder, full F1 / F2, F1c / F1d)
+  const DX = R.decx;
+  if (DX && DX.runs) {
+    const DR = DX.runs;
+    const EV = (run, sp) => (((DR[run] || {}).evals || {})[sp] || []);
+    const lastE = (run, sp) => { const a = EV(run, sp); return a.length ? a[a.length - 1] : {}; };
+    const chain = (runs, sp) => { const m = new Map(); for (const r of runs) for (const e of EV(r, sp)) if (!m.has(e.step)) m.set(e.step, e); return [...m.values()].sort((a, b) => a.step - b.step); };
+    const F1R = ["F1_lastnorm", "F1b_resume_b28", "F1b_cont"];
+    const f1v = chain(F1R, "val"), f1t = chain(F1R, "train"), f2v = EV("F2_multitap", "val"), f2t = EV("F2_multitap", "train");
+    const f1L = f1v.length ? f1v[f1v.length - 1] : {}, f2L = f2v.length ? f2v[f2v.length - 1] : {};
+    const P = (arr, k) => arr.map((e) => [e.step, e[k]]);
+    const sgn = (x) => (x == null || isNaN(x)) ? "–" : (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(3);
+    const LINEAR49 = 0.263, VGGT_VAL = (f2L.vggt_absrel_frame != null ? f2L.vggt_absrel_frame : 0.028), VGGT_ROT = (f2L.vggt_rot_err_med != null ? f2L.vggt_rot_err_med : 0.18);
+
+    // configuration table
+    const CFG = [["S1c_debug_A1", "A1"], ["S1c_debug_A2", "A2"], ["S1c_debug_A3", "A3"], ["S1c_debug_A4", "A4"], ["S1c_debug_A6", "A6"],
+      ["S1c_debug_A7", "A7"], ["S1c_debug_A8", "A8"], ["S1c_debug_A9", "A9"], ["D2_V1a", "V1a"], ["D2_V1b", "V1b"], ["D2_V1c", "V1c"],
+      ["D2_V1d", "V1d"], ["OF_normout", "过拟合测试"], ["F2_multitap", "F2"], ["F1_lastnorm", "F1"], ["F1c_n256", "F1c"], ["F1d_std256", "F1d"]];
+    const cfgRow = ([run, lab]) => {
+      const r = DR[run]; if (!r) return "";
+      const a = r.args || {}, cache = String(a.cache || "").split("/").pop(), single = a.single_tap != null && a.single_tap >= 0;
+      const full = cache === "taps_full_t08";
+      const nwin = a.train_subset ? a.train_subset : full ? "12,428" : 256;
+      const layers = single ? "49（单层）" : cache.endsWith("_b6") ? "24–44 每 4 层，6 层加权组合" : "12 / 24 / 36 / 49";
+      const tval = cache === "taps_s1c" ? "1" : "0.8";
+      const norm = single && a.in_norm === "normout" ? "H3 输出归一化" + (a.chan_norm > 0 ? " + 逐通道标准化" : "") : (a.chan_norm > 0 ? "逐通道标准化 + LN" : "LN");
+      const adp = (a.adapter === "hybrid" ? "混合" : "广播") + (single ? "，1 个共享 + 4 个输出头" : "，4 个");
+      const cam = run === "S1c_debug_A4" ? "跨帧 trunk" : a.cam_src === "all_v2" ? ((single ? "读共享适配器输出" : "读全部层") + (a.cam_pos === "ln" ? "，键加位置编码" : "") + (a.cam_ref ? "，读第 0 帧" : "")) : "每帧查询，读最后一层";
+      const ls = a.cam_ls_init > 0 ? "重新打开" : "原版";
+      const tch = a.teacher_online ? `在线（每步 ${a.teacher_per_step} 个窗口）` : a.teacher ? "有（预先缓存）" : "无";
+      const steps = run === "F1_lastnorm" ? "24 × 2000 → 28 × 1000 → 28 × 3000（进行中）" : run === "F1d_std256" ? `${a.batch} × 1000（提前停止）` : run === "F2_multitap" ? `${a.batch} × 2000（第 2000 步后停止）` : `${a.batch} × ${a.steps}`;
+      const init = run === "F1c_n256" || run === "F1d_std256" ? "F1 第 3000 步" : "从头";
+      return `<tr><td>${lab}</td><td>${nwin}</td><td style="text-align:left">${layers}</td><td>${tval}</td><td style="text-align:left">${norm}</td><td style="text-align:left">${adp}</td><td style="text-align:left">${cam}</td><td>${ls}</td><td style="text-align:left">${tch}</td><td>${a.rgb_stem ? "有" : "无"}</td><td>${steps}</td><td>${init}</td></tr>`;
+    };
+    $("tblDxCfg").innerHTML = `<tr><th>实验</th><th>窗口数</th><th>读哪些层</th><th>特征 t</th><th>归一化</th><th>适配器</th><th>相机查询</th><th>相机头 LayerScale</th><th>VGGT-Ω 教师</th><th>RGB 分支</th><th>batch × 步数</th><th>起点</th></tr>` + CFG.map(cfgRow).join("");
+
+    // 256-window ladder
+    const LAD = [["S1c_debug_A1", "A1", "基线：读第 12/24/36/49 层（t = 1）+ 广播适配器 + 每帧相机查询；修正训练配方（视场角激活、先冻结头部再放开、WSD 学习率）"],
+      ["S1c_debug_A2", "A2", "相机查询改为读全部 4 层，并重新打开相机头的 LayerScale"], ["S1c_debug_A3", "A3", "适配器改为混合适配器（每帧、每个子位置有独立读出）"],
+      ["S1c_debug_A4", "A4", "加跨帧 trunk 代替相机查询（更差，弃用）"], ["S1c_debug_A6", "A6", "A3 + RGB 卷积分支（几乎无收益，后续保留）"],
+      ["S1c_debug_A7", "A7", "DiT 特征改为 t = 0.8（少量加噪）提取"], ["S1c_debug_A8", "A8", "+ 逐通道标准化（压住少数超大数值通道）"],
+      ["S1c_debug_A9", "A9", "+ 相机查询的键加 LayerNorm 和二维位置编码、读第 0 帧"], ["D2_V1a", "V1a", "A9 + VGGT-Ω 教师 token 监督"],
+      ["D2_V1b", "V1b", "A9 改读第 24–44 层（6 层可学习加权组合），无教师"], ["D2_V1c", "V1c", "V1b + 教师监督"],
+      ["D2_V1d", "V1d", "V1c + 相机头保持原版（不重新打开 LayerScale）"],
+      ["F1c_n256", "F1c", "单层方案（第 49 层 + H3 输出归一化），从全量 F1 第 3000 步继续"], ["F1d_std256", "F1d", "F1c + 输入逐通道标准化"]];
+    const cols = [["train", "absrel_frame", f3], ["held", "absrel_frame", f3], ["held", "rot_err_med", deg], ["val", "absrel_frame", f3], ["val", "absrel_tok", f3], ["val", "rot_err_med", deg], ["val", "trans_dir_err_med", deg], ["val", "auc30", f3]];
+    const ladRuns = LAD.slice(0, 12).map((x) => x[0]);
+    const bestOf = cols.map(([sp, k]) => { const v = ladRuns.map((r) => lastE(r, sp)[k]).filter((x) => x != null); return k === "auc30" ? Math.max(...v) : Math.min(...v); });
+    $("tblDxLadder").innerHTML = `<tr><th rowspan="2">实验</th><th rowspan="2" style="text-align:left">相对上一行的改动</th><th>训练窗口</th><th colspan="2">held-out（32）</th><th colspan="5">验证（32，没见过的场景）</th></tr>` +
+      `<tr><th>深度</th><th>深度</th><th>旋转</th><th>深度</th><th>token 级深度</th><th>旋转</th><th>平移方向</th><th>AUC@30</th></tr>` +
+      LAD.map(([run, lab, txt], i) => {
+        if (!DR[run]) return "";
+        const pick = (sp) => i >= 12 ? (EV(run, sp).find((e) => e.step === 4000) || lastE(run, sp)) : lastE(run, sp);
+        const tds = cols.map(([sp, k, fmt], j) => { const v = pick(sp)[k]; return `<td class="${i < 12 && v === bestOf[j] ? "best" : ""}">${fmt(v)}</td>`; }).join("");
+        const step = pick("val").step;
+        return `<tr class="${i === 12 ? "sep" : ""}"><td>${lab}${i >= 12 ? `<br><span style="color:var(--ink-3)">第 ${step} 步</span>` : ""}</td><td style="text-align:left;white-space:normal;min-width:16em">${txt}</td>${tds}</tr>`;
+      }).join("") +
+      `<tr class="sep"><td>VGGT-Ω</td><td style="text-align:left;white-space:normal">同样窗口上的参照</td><td>${f3(lastE("D2_V1d", "train").vggt_absrel_frame)}</td><td>${f3(lastE("D2_V1d", "held").vggt_absrel_frame)}</td><td>${deg(lastE("D2_V1d", "held").vggt_rot_err_med)}</td><td>${f3(lastE("D2_V1d", "val").vggt_absrel_frame)}</td><td>–</td><td>${deg(lastE("D2_V1d", "val").vggt_rot_err_med)}</td><td>${deg(lastE("D2_V1d", "val").vggt_trans_dir_err_med)}</td><td>${f3(lastE("D2_V1d", "val").vggt_auc30)}</td></tr>`;
+    const g = (r, sp, k) => lastE(r, sp)[k];
+    $("dxLadderConcl").innerHTML = `<b>结论</b>① 相机：让相机查询读全部 4 层（A2）是最大的一步，验证集旋转误差 ${deg(g("S1c_debug_A1", "val", "rot_err_med"))} → ${deg(g("S1c_debug_A2", "val", "rot_err_med"))}；t = 0.8 的特征和逐通道标准化（A7、A8）降到 ${deg(g("S1c_debug_A8", "val", "rot_err_med"))}，键的位置编码（A9）${deg(g("S1c_debug_A9", "val", "rot_err_med"))}，教师监督（V1a）${deg(g("D2_V1a", "val", "rot_err_med"))}（held-out 上 A9 略有回升，其余趋势相同）。` +
+      `② 深度：t = 0.8 的特征（A7）和逐通道标准化（A8）各带来一次明显改进，held-out 深度 ${f3(g("S1c_debug_A6", "held", "absrel_frame"))} → ${f3(g("S1c_debug_A7", "held", "absrel_frame"))} → ${f3(g("S1c_debug_A8", "held", "absrel_frame"))}；读中间 6 层并加教师（V1c）再降到 ${f3(g("D2_V1c", "held", "absrel_frame"))}。` +
+      `③ 最好的 V1d：验证集深度 ${f3(g("D2_V1d", "val", "absrel_frame"))}、旋转 ${deg(g("D2_V1d", "val", "rot_err_med"))}，离 VGGT-Ω（${f3(g("D2_V1d", "val", "vggt_absrel_frame"))}、${deg(g("D2_V1d", "val", "vggt_rot_err_med"))}）仍有很大差距。` +
+      `④ 单层方案在同样 256 个窗口上：F1c 跑完 1500 步，训练窗口误差降到 ${f3(g("F1c_n256", "train", "absrel_frame"))}，验证集却停在 ${f3(g("F1c_n256", "val", "absrel_frame"))}，是“背”而不是“学”；F1d 加了输入标准化，第 4000 步验证集 ${f3(g("F1d_std256", "val", "absrel_frame"))}（F1c 同一步 ${f3((EV("F1c_n256", "val").find((e) => e.step === 4000) || {}).absrel_frame)}），但仍明显差于多层方案。`;
+
+    // full data: F1 chain vs F2
+    lineChart($("chDxFullDepth"), { title: "深度 AbsRel（逐帧对齐）", yLabel: "AbsRel", log: true, xMin: 0, series: [
+      { name: "F1 · 验证", color: "--s2", points: P(f1v, "absrel_frame") }, { name: "F1 · 训练窗口", color: "--s2", dash: true, points: P(f1t, "absrel_frame") },
+      { name: "F2 · 验证", color: "--s1", points: P(f2v, "absrel_frame") }, { name: "F2 · 训练窗口", color: "--s1", dash: true, points: P(f2t, "absrel_frame") }],
+      refs: [{ y: LINEAR49, label: "线性读出（第 49 层）" + f3(LINEAR49) }, { y: VGGT_VAL, label: "VGGT-Ω 验证 " + f3(VGGT_VAL) }] });
+    lineChart($("chDxFullCam"), { title: "旋转误差", yLabel: "度", log: true, xMin: 0, series: [
+      { name: "F1 · 验证", color: "--s2", points: P(f1v, "rot_err_med") }, { name: "F1 · 训练窗口", color: "--s2", dash: true, points: P(f1t, "rot_err_med") },
+      { name: "F2 · 验证", color: "--s1", points: P(f2v, "rot_err_med") }, { name: "F2 · 训练窗口", color: "--s1", dash: true, points: P(f2t, "rot_err_med") }],
+      refs: [{ y: VGGT_ROT, label: "VGGT-Ω 验证 " + deg(VGGT_ROT) }] });
+    const pv = (DX.paired || {}).F1bcont_vs_F2_val || {};
+    const f1seq = f1v.filter((e) => e.step >= 1000).map((e) => `第 ${e.step} 步 ${f3(e.absrel_frame)}`).join("，");
+    const p12 = (DX.paired || {}).F1bcont_vs_F1_2000_val || {};
+    const flat = p12.absrel_frame && p12.absrel_frame.lo <= 0 && p12.absrel_frame.hi >= 0;
+    $("dxFullConcl").innerHTML = `<b>结论</b>F2 第 1000 步验证集深度就到了 ${f3((f2v.find((e) => e.step === 1000) || {}).absrel_frame)}，第 2000 步 ${f3(f2L.absrel_frame)}、旋转 ${deg(f2L.rot_err_med)}，与 256 个窗口上 V1 系列的结果相当（注意全量结果都还没进入学习率衰减）。F1 的验证集深度：${f1seq}。` +
+      (p12.absrel_frame ? `第 ${DX.f1b_last} 步与第 2000 步逐窗口配对，深度差 ${sgn(p12.absrel_frame.mean)}（95% 置信区间 ${sgn(p12.absrel_frame.lo)} 到 ${sgn(p12.absrel_frame.hi)}）${flat ? "，第 2000 步之后基本没有再下降" : ""}。` : "") +
+      `F1 的训练窗口和验证集几乎一样高：不是过拟合，而是训练数据本身就学不进去。`;
+    const fullRow = (lab, e, et) => `<tr><td>${lab}</td><td>${e.step}</td><td>${f3(et.absrel_frame)}</td><td>${deg(et.rot_err_med)}</td><td>${f3(e.absrel_frame)}</td><td>${f3(e.absrel_tok)}</td><td>${deg(e.rot_err_med)}</td><td>${deg(e.trans_dir_err_med)}</td><td>${f3(e.auc30)}</td></tr>`;
+    const tAt = (arr, st) => arr.find((e) => e.step === st) || {};
+    $("tblDxFull").innerHTML = `<tr><th rowspan="2">实验</th><th rowspan="2">步数</th><th colspan="2">训练窗口（64）</th><th colspan="5">验证（32）</th></tr><tr><th>深度</th><th>旋转</th><th>深度</th><th>token 级深度</th><th>旋转</th><th>平移方向</th><th>AUC@30</th></tr>` +
+      f2v.filter((e) => e.step > 0).map((e) => fullRow("F2", e, tAt(f2t, e.step))).join("") +
+      f1v.filter((e) => e.step > 0).map((e, i) => fullRow("F1", e, tAt(f1t, e.step)).replace("<tr>", i === 0 ? '<tr class="sep">' : "<tr>")).join("") +
+      `<tr class="sep"><td>VGGT-Ω</td><td>–</td><td>${f3(tAt(f2t, f2L.step).vggt_absrel_frame)}</td><td>${deg(tAt(f2t, f2L.step).vggt_rot_err_med)}</td><td>${f3(f2L.vggt_absrel_frame)}</td><td>–</td><td>${deg(f2L.vggt_rot_err_med)}</td><td>${deg(f2L.vggt_trans_dir_err_med)}</td><td>${f3(f2L.vggt_auc30)}</td></tr>`;
+    if (pv.absrel_frame) $("dxFullTblConcl").innerHTML = `<b>结论</b>逐窗口配对比较（F1 第 ${DX.f1b_last} 步 − F2 第 2000 步，32 个验证窗口）：深度 ${sgn(pv.absrel_frame.mean)}（95% 置信区间 ${sgn(pv.absrel_frame.lo)} 到 ${sgn(pv.absrel_frame.hi)}），${pv.absrel_frame.win > 0 ? `只有 ${(100 * pv.absrel_frame.win).toFixed(0)}% 的窗口 F1 更好` : "没有一个窗口 F1 更好"}；旋转 ${pv.rot_err_med.mean > 0 ? "+" : "−"}${Math.abs(pv.rot_err_med.mean).toFixed(2)}°，${pv.rot_err_med.win > 0 ? (100 * pv.rot_err_med.win).toFixed(0) + "% 的窗口 F1 更好" : "没有一个窗口 F1 更好"}。`;
+
+    // F1c vs F1d (256 windows, same start)
+    const c_v = EV("F1c_n256", "val"), c_h = EV("F1c_n256", "held"), c_t = EV("F1c_n256", "train");
+    const d_v = EV("F1d_std256", "val"), d_h = EV("F1d_std256", "held"), d_t = EV("F1d_std256", "train");
+    lineChart($("chDxCD"), { title: "验证集（实线）和 held-out（虚线）深度", yLabel: "AbsRel", xMin: 3000, series: [
+      { name: "F1c · 验证", color: "--s2", points: P(c_v, "absrel_frame") }, { name: "F1c · held-out", color: "--s2", dash: true, points: P(c_h, "absrel_frame") },
+      { name: "F1d · 验证", color: "--s1", points: P(d_v, "absrel_frame") }, { name: "F1d · held-out", color: "--s1", dash: true, points: P(d_h, "absrel_frame") }],
+      refs: [{ y: LINEAR49, label: "线性读出 " + f3(LINEAR49) }, { y: g("D2_V1d", "val", "absrel_frame"), label: "多层 V1d 验证 " + f3(g("D2_V1d", "val", "absrel_frame")) }] });
+    lineChart($("chDxCDtrain"), { title: "训练窗口（被训练的 256 个窗口中的 64 个）深度", yLabel: "AbsRel", xMin: 3000, series: [
+      { name: "F1c · 训练窗口", color: "--s2", points: P(c_t, "absrel_frame") }, { name: "F1d · 训练窗口", color: "--s1", points: P(d_t, "absrel_frame") }] });
+    const at = (arr, st) => (arr.find((e) => e.step === st) || {}).absrel_frame;
+    const dL = d_v.length ? d_v[d_v.length - 1].step : null;
+    $("dxCDConcl").innerHTML = `<b>结论</b>F1c 的训练窗口误差从 ${f3(at(c_t, 3000))} 降到 ${f3(lastE("F1c_n256", "train").absrel_frame)}（第 ${lastE("F1c_n256", "train").step} 步），验证集却始终在 ${f3(Math.min(...c_v.map((e) => e.absrel_frame)))}–${f3(Math.max(...c_v.map((e) => e.absrel_frame)))} 之间：这是记忆，不是学习。F1d 起点相同，只改了输入的标准化：第 3250 步验证集就降到 ${f3(at(d_v, 3250))}，第 ${dL} 步 ${f3(at(d_v, dL))}（F1c 同一步 ${f3(at(c_v, dL))}）；同一步的训练窗口也更低（${f3(at(d_t, dL))} 对 ${f3(at(c_t, dL))}）。也就是说，同一个模型、同样的数据和步数，标准化之后学到了能推广到没见过场景的深度，F1 的主要问题是输入的通道尺度，而不是训练步数不够。不过 F1d 的验证集仍明显差于多层方案（V1d ${f3(g("D2_V1d", "val", "absrel_frame"))}），这与第 49 层本身信息较少一致。`;
+    const pc = (o) => !o ? "–" : `<span style="${o.lo > 0 || o.hi < 0 ? "font-weight:600" : ""}">${sgn(o.mean)}</span> <span style="color:var(--ink-3)">[${sgn(o.lo)}, ${sgn(o.hi)}]</span> ${(100 * o.win).toFixed(0)}%`;
+    const PD = DX.paired || {};
+    $("tblDxCD").innerHTML = `<tr><th>步数</th><th>验证 · 深度</th><th>验证 · token 级深度</th><th>验证 · 旋转（度）</th><th>held-out · 深度</th><th>训练窗口 · 深度</th></tr>` +
+      [3250, 3500, 3750, 4000].filter((s) => PD[`F1d_vs_F1c_${s}_val`]).map((s) => `<tr><td>${s}</td><td>${pc(PD[`F1d_vs_F1c_${s}_val`].absrel_frame)}</td><td>${pc(PD[`F1d_vs_F1c_${s}_val`].absrel_tok)}</td><td>${pc(PD[`F1d_vs_F1c_${s}_val`].rot_err_med)}</td><td>${pc((PD[`F1d_vs_F1c_${s}_held`] || {}).absrel_frame)}</td><td>${pc((PD[`F1d_vs_F1c_${s}_train`] || {}).absrel_frame)}</td></tr>`).join("");
+
+    // visuals
+    const DV = DX.decvis || {};
+    if ($("dxColF1")) $("dxColF1").textContent = `F1 全量（第 ${DX.f1b_last} 步）`;
+    const mcell = (o) => o ? `${f3(o.absrel_frame)} / ${deg(o.rot_err_med)}` : "–";
+    $("dxVis").innerHTML = (DV.clips || []).map((c) => `<figure class="vfig" style="margin-top:8px"><img src="decvis/${c.id}.jpg" alt="${esc(c.clip || c.id)} 深度对比" loading="lazy" style="width:100%;display:block;border-radius:4px">` +
+      `<figcaption><span><b>${esc(c.clip || c.id)}</b>深度 AbsRel / 旋转误差：F1 全量 ${mcell(c.F1b_cont)}，F1d ${mcell(c.F1d_std256)}，F2 ${mcell(c.F2_multitap)}，VGGT-Ω ${mcell(c.vggt)}</span></figcaption></figure>`).join("");
+
+    $("dxConcl").innerHTML = `<b>结论与下一步</b>
+      <p style="margin:6px 0 0">① 多层方案：在 256 个窗口上逐步改进到验证集深度 ${f3(g("D2_V1d", "val", "absrel_frame"))}、旋转 ${deg(g("D2_V1d", "val", "rot_err_med"))}（V1d）；全量 F2 第 2000 步验证集 ${f3(f2L.absrel_frame)}、旋转 ${deg(f2L.rot_err_med)}，与之相当。最有效的几处改动：相机查询读全部层、t = 0.8 的特征、逐通道标准化、VGGT-Ω 教师监督。</p>
+      <p style="margin:6px 0 0">② 单层方案（第 49 层 + H3 自带输出归一化）：16 个窗口能过拟合到超过 VGGT-Ω，但全量训练到第 ${f1L.step} 步验证集仍为 ${f3(f1L.absrel_frame)}、旋转 ${deg(f1L.rot_err_med)}，明显落后于 F2。诊断表明主要原因是 H3 的输出归一化把大部分通道压小了上千倍，优化器用不上这些通道，而深度信息有相当一部分就在其中；在同样 256 个窗口上对输入做逐通道标准化（F1d），1000 步后验证集误差比不标准化低约 0.06（逐窗口配对，91% 的窗口更好）。此外第 49 层本身的线性可读几何信息也少于第 36 层（0.263 对 0.210）。</p>
+      <p style="margin:6px 0 0">③ 所有方案离 VGGT-Ω（验证集 ${f3(VGGT_VAL)}、${deg(VGGT_ROT)}）都还很远。F1 全量续训仍在进行（目标第 6000 步）；之后结合这些结果确定解码器（是否加入输入标准化、读哪几层），再进入放开 DiT 的阶段。</p>`;
+  }
+  const OV = R.ofvis;
+  if (OV && OV.clips && OV.clips.length) {
+    const sel = $("ofClip"), SPL = { train: "训练窗口（被记忆）", held: "held-out（训练场景，没训练过）", val: "验证（没见过的场景）" };
+    sel.innerHTML = ["train", "held", "val"].map((sp) => `<optgroup label="${SPL[sp]}">` +
+      OV.clips.filter((c) => c.split === sp).map((c) => `<option value="${c.id}">${esc(c.clip)}</option>`).join("") + "</optgroup>").join("");
+    sel.value = OV.clips[0].id;
+    const oclouds = {}; let ocur = null, omode = "ours";
+    const ocan = $("ofCloud"), octx = ocan.getContext("2d");
+    const oview = { yaw: 0, pitch: 0.45, zoom: 1 };
+    const dec16 = (b64) => { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Int16Array(u.buffer); };
+    window.__ofcloud = (key, d) => {
+      const cb = atob(d.rgb), c = new Uint8Array(cb.length); for (let i = 0; i < cb.length; i++) c[i] = cb.charCodeAt(i);
+      const sets = { gt: dec16(d.gt), ours: dec16(d.ours), vggt: dec16(d.vggt) };
+      const med = (a) => { const b = Float64Array.from(a).sort(); return b[b.length >> 1]; };
+      const ax = [0, 1, 2].map((k) => { const v = []; for (let i = 0; i < d.n; i++) v.push(sets.gt[3 * i + k] / 32000); return v; });
+      const mid = ax.map(med), mad = Math.max(...ax.map((v, k) => med(v.map((x) => Math.abs(x - mid[k])))), 1e-4);
+      oclouds[key] = { n: d.n, sets, rgb: c, mid, scale: 0.45 / mad };
+      if (ocur === key) odraw();
+    };
+    function odraw() {
+      const C = oclouds[ocur]; if (!C) return;
+      const Pp = C.sets[omode], W = ocan.width, H = ocan.height;
+      octx.fillStyle = css("--sunk"); octx.fillRect(0, 0, W, H);
+      const cy = Math.cos(oview.yaw), sy = Math.sin(oview.yaw), cp = Math.cos(oview.pitch), sp = Math.sin(oview.pitch);
+      const f = Math.min(W, H) * 0.9 * oview.zoom, dist = 3.0, items = [];
+      for (let i = 0; i < C.n; i++) {
+        const x = (Pp[3 * i] / 32000 - C.mid[0]) * C.scale, y = -(Pp[3 * i + 1] / 32000 - C.mid[1]) * C.scale, z = (Pp[3 * i + 2] / 32000 - C.mid[2]) * C.scale;
+        const x1 = cy * x + sy * z, z1 = -sy * x + cy * z, y2 = cp * y + sp * z1, z2 = -sp * y + cp * z1;
+        if (z2 + dist <= 0.05) continue; const k = f / (z2 + dist); items.push([z2, W / 2 + x1 * k, H / 2 - y2 * k, i]);
+      }
+      items.sort((a, b) => b[0] - a[0]);
+      for (const [, px, py, i] of items) { octx.fillStyle = `rgb(${C.rgb[3 * i]},${C.rgb[3 * i + 1]},${C.rgb[3 * i + 2]})`; octx.fillRect(px - 1.4, py - 1.4, 2.8, 2.8); }
+    }
+    let odrag = null;
+    ocan.addEventListener("pointerdown", (e) => { odrag = [e.clientX, e.clientY, oview.yaw, oview.pitch]; ocan.setPointerCapture(e.pointerId); });
+    ocan.addEventListener("pointermove", (e) => { if (!odrag) return; oview.yaw = odrag[2] + (e.clientX - odrag[0]) * 0.01; oview.pitch = Math.max(-1.4, Math.min(1.4, odrag[3] + (e.clientY - odrag[1]) * 0.01)); odraw(); });
+    ocan.addEventListener("pointerup", () => { odrag = null; });
+    ocan.addEventListener("wheel", (e) => { e.preventDefault(); oview.zoom = Math.max(0.3, Math.min(5, oview.zoom * (e.deltaY > 0 ? 0.9 : 1.1))); odraw(); }, { passive: false });
+    for (const btn of document.querySelectorAll("#ofviewer button[data-m]")) btn.addEventListener("click", () => {
+      omode = btn.dataset.m; for (const b of document.querySelectorAll("#ofviewer button[data-m]")) b.classList.toggle("on", b === btn); odraw();
+    });
+    function orender() {
+      const c = OV.clips.find((x) => x.id === sel.value); if (!c) return;
+      $("ofImg").src = `ofvis/${c.id}.jpg`;
+      const cl = (k, fmt) => `<td class="${(k === "auc30" ? c.ours[k] > c.vggt[k] : c.ours[k] < c.vggt[k]) ? "best" : ""}">${fmt(c.ours[k])}</td><td>${fmt(c.vggt[k])}</td>`;
+      $("ofMeta").innerHTML = `<table><tr><th rowspan="2">${SPL[c.split]}</th><th colspan="2">深度 AbsRel</th><th colspan="2">旋转</th><th colspan="2">平移方向</th><th colspan="2">AUC@30</th></tr>` +
+        `<tr><th>我们</th><th>VGGT-Ω</th><th>我们</th><th>VGGT-Ω</th><th>我们</th><th>VGGT-Ω</th><th>我们</th><th>VGGT-Ω</th></tr>` +
+        `<tr><td style="text-align:left">${esc(c.clip)}</td>${cl("absrel_frame", f3)}${cl("rot_err_med", deg)}${cl("trans_dir_err_med", deg)}${cl("auc30", f3)}</tr></table>`;
+      const sets = [["gt", "真值", "--ink-2", true], ["vggt", "VGGT-Ω", "--s1", false], ["ours", "我们", "--s2", false]];
+      const pts = sets.flatMap(([k]) => c.centres[k].map((p) => [p[0], p[2]]));
+      const xs = pts.map((p) => p[0]), zs = pts.map((p) => p[1]);
+      const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs), 1e-3) * 1.15;
+      const cx = (Math.max(...xs) + Math.min(...xs)) / 2, cz = (Math.max(...zs) + Math.min(...zs)) / 2, W = 460, H = 340, sc = (Math.min(W, H) - 60) / span;
+      const X = (v) => W / 2 + (v - cx) * sc, Y = (v) => H / 2 - (v - cz) * sc;
+      let sv = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="相机轨迹俯视"><rect width="${W}" height="${H}" fill="${css("--sunk")}" rx="6"/>`;
+      for (const [k, , col, dash] of sets) {
+        const Q = c.centres[k];
+        sv += `<path d="${Q.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[2]).toFixed(1)).join(" ")}" fill="none" stroke="${css(col)}" stroke-width="2" ${dash ? 'stroke-dasharray="6 4"' : ""}/>`;
+        sv += `<circle cx="${X(Q[0][0])}" cy="${Y(Q[0][2])}" r="4" fill="${css(col)}" stroke="${css("--surface")}" stroke-width="1.5"/>`;
+      }
+      sv += `</svg><div class="legend">${sets.map(([, lab, col, dash]) => `<span><i class="${dash ? "dash" : ""}" style="border-color:${css(col)}"></i>${lab}</span>`).join("")}<span>圆点为第 0 帧</span></div>`;
+      $("ofTraj").innerHTML = sv;
+      ocur = `OF/${c.id}`;
+      if (oclouds[ocur]) odraw(); else { octx.clearRect(0, 0, ocan.width, ocan.height); const sc2 = document.createElement("script"); sc2.src = `ofvis/${c.id}.cloud.js`; document.body.appendChild(sc2); }
+    }
+    sel.addEventListener("change", orender);
+    orender();
+  } else if ($("ofviewer")) { $("ofviewer").innerHTML = `<p class="pending">可视化数据还在生成。</p>`; }
   // ---------------------------------------------------------------- training data tables
   const SCENES = {"abandonedfactory":{"Easy":[9,11781],"Hard":[11,8820]},"abandonedfactory_night":{"Easy":[13,14523],"Hard":[14,10158]},"amusement":{"Easy":[6,6181],"Hard":[7,4802]},"hospital":{"Easy":[36,16340],"Hard":[12,5456]},"japanesealley":{"Easy":[5,3359],"Hard":[5,2052]},"neighborhood":{"Easy":[19,24529],"Hard":[17,15648]},"office":{"Easy":[6,8047],"Hard":[7,4677]},"office2":{"Easy":[10,8534],"Hard":[11,7639]},"seasonsforest":{"Easy":[9,3906],"Hard":[4,1428]},"seasonsforest_winter":{"Easy":[10,10304],"Hard":[9,7372]},"westerndesert":{"Easy":[11,5236],"Hard":[7,3326]}};
   const VALS = {"carwelding":{"Easy":[6,3772],"Hard":[4,2143]},"endofworld":{"Easy":[10,8423],"Hard":[5,2882]}};
