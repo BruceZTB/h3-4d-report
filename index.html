@@ -138,10 +138,10 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
 <header>
   <div class="eyebrow">MiniMax-H3 × VGGT-Ω · 几何分支</div>
   <h1>H3-4D 训练报告</h1>
-  <p class="lede prose">在 MiniMax-H3 视频生成模型上接 VGGT-Ω 的预训练深度头和相机头，让同一个模型同时输出 RGB、深度和相机位姿。本报告记录上线前的核对、阶段 A（过拟合验证）和阶段 B（TartanAir 全量训练）、户外片段深度异常的排查，之后的 G1（只给一张图就联合生成 RGB 视频 + 深度 + 相机）及其问题定位，以及当前的阶段 1：冻结 H3，只训练读 DiT 特征的几何解码器，先在 TartanAir 上过拟合到超过 VGGT-Ω；最后一节记录冻结 DiT 之后，从 256 个窗口到全量 TartanAir 逐步确定解码器结构的实验。</p>
+  <p class="lede prose">在 MiniMax-H3 视频生成模型上接 VGGT-Ω 的预训练深度头和相机头，让同一个模型同时输出 RGB、深度和相机位姿。本报告记录上线前的核对、阶段 A（过拟合验证）和阶段 B（TartanAir 全量训练）、户外片段深度异常的排查，之后的 G1（只给一张图就联合生成 RGB 视频 + 深度 + 相机）及其问题定位，以及之前的阶段 1（S1）：冻结 H3，只训练读 DiT 特征的几何解码器，先在 TartanAir 上过拟合到超过 VGGT-Ω；再之后一节记录冻结 DiT 之后，从 256 个窗口到全量 TartanAir 逐步确定解码器结构的实验。<b>最新进展见紧接要点之后的“新版本：H3 编码器 + VGGT-Ω”一节</b>：不再读 DiT 特征，H3 VAE 编码器的 latent 接入 VGGT-Ω，RGB 由 H3 自己的解码器重建。</p>
   <div class="meta" id="chips"></div>
   <nav class="toc" aria-label="目录">
-    <a href="#summary">要点</a><a href="#setup">模型方案</a><a href="#data">训练数据</a><a href="#checks">上线前核对</a>
+    <a href="#summary">要点</a><a href="#h3om">新版本：H3 编码器 + VGGT-Ω</a><a href="#setup">模型方案</a><a href="#data">训练数据</a><a href="#checks">上线前核对</a>
     <a href="#stageA">阶段 A 过拟合</a><a href="#stageB">阶段 B 全量训练</a><a href="#vis">可视化结果</a><a href="#outdoor">户外片段排查</a><a href="#g1">G1 联合生成</a><a href="#g1diag">G1 问题定位</a><a href="#stage1">阶段 1（S1）</a><a href="#ofnorm">解码器简化</a><a href="#decx">解码器探索（冻结 DiT）</a><a href="#ablations">消融实验计划</a><a href="#next">B1 结论与下一步</a><a href="#glossary">指标说明</a>
   </nav>
 </header>
@@ -149,6 +149,157 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
 <section id="summary">
   <h2>要点</h2>
   <div class="summary" id="summaryCards"></div>
+</section>
+
+<section id="h3om">
+  <h2>新版本：H3 编码器 + VGGT-Ω（保留 RGB 解码器）</h2>
+  <dl class="block">
+    <dt>目标</dt><dd>输入一段视频，同时输出 RGB、逐帧深度和相机位姿，几何精度至少达到 VGGT-Ω。和之前各节最大的不同：<b>不再读 H3 DiT 的特征</b>，只用 H3 VAE 编码器输出的 latent。深度和相机是预测任务；RGB 分支是重建，由 H3 自己的 VAE 解码器完成。</dd>
+    <dt>为什么这样做</dt><dd>读冻结 DiT 特征的路线卡在 DiT token 的粒度上（一个 token 覆盖 4 帧 × 32×32 像素），最好的结果是验证集深度 0.144–0.154、旋转约 2.1–2.5°，离 VGGT-Ω（0.028 / 0.18°）很远。文献里同类工作（Latent Bridge、AEON、SplatFlux）的共同做法，是把视频 VAE 的 latent 接到一个预训练三维重建模型的输入端或浅层，复用它的整个网络。H3 VAE 的 latent 每帧是 24×32 的网格，恰好等于 VGGT-Ω 在 384×512 输入下的 patch 网格，可以直接对齐。</dd>
+    <dt>路线</dt><dd>按三步走：① Latent Bridge 式诊断（阶段 1）：一切冻结，只训练一个 Adapter 去拟合 VGGT-Ω 编码器的最终输出；② AEON 式主方案（阶段 2）：Adapter 接到 VGGT-Ω 编码器的浅层，下游一起微调，只用教师蒸馏；③ 端到端微调（阶段 3，开发中）：在阶段 2 的基础上加入真值深度和相机损失，用真值监督整体微调重建网络，这一点借鉴 SplatFlux；另外解冻 H3 编码器，并加入经冻结解码器的 RGB 重建损失。后两项是我们新加的：SplatFlux、AEON 和 Latent Bridge 都冻结 VAE。</dd>
+    <dt>评估</dt><dd>四组窗口：训练窗口 64 个（在训练集里）、held-out 32 个（训练场景里没训练过的窗口）、验证 32 个和验证 128 个，都来自训练从未见过的两个场景 carwelding、endofworld。验证 32 沿用前面各节的同一组窗口；验证 128 是在这两个场景所有不重叠的窗口里均匀抽取的，样本更多、置信区间更窄。验证 128 不是由验证 32 扩充而来，两组只有 4 个窗口相同。指标和前面各节相同：逐帧中位数对齐的深度 AbsRel、token 级 AbsRel（与前面各节定义相同：逐帧中位数对齐后，把对数深度在一个 DiT token 覆盖的范围内取平均，即 32×32 像素、同一 latent 对应的 1 或 4 帧，再算 AbsRel；只反映粗粒度误差。新版本不经过 DiT，沿用这个粒度是为了和前面各节可比）、所有帧对的相对旋转误差和平移方向误差（中位数，度）、AUC@30。另外两项：“与教师的差”，即把 VGGT-Ω 在原始 RGB 上的预测当作答案时的同样误差；token R²，即 Adapter 输出与 VGGT-Ω 编码器同一层 token 的拟合优度：按通道标准化后，以该窗口全部 token 的总体均值为基线，逐窗口计算再取平均（与下文岭回归探针的 R² 算法不同，两处数值不能直接比较）。训练数据为 11 个训练场景中的 4096 个 22 帧窗口：包含之前 256 个窗口实验用的全部窗口，其余从全量 12,428 个窗口中均匀抽取，排除与 held-out 窗口有重叠帧的窗口。</dd>
+  </dl>
+
+  <h3>模型结构</h3>
+  <figure>
+    <div class="fig-title">H3 编码器 + VGGT-Ω：视频进，RGB + 深度 + 相机出</div>
+    <div class="flow">
+      <div class="node frozen"><b>视频 RGB</b>22 帧，384×512</div><div class="arrow">→</div>
+      <div class="node frozen"><b>H3 VAE 编码器</b>3D 卷积网络。阶段 1、2 冻结（latent 预先算好）；阶段 3 微调</div><div class="arrow">→</div>
+      <div class="node frozen"><b>latent</b>24 通道 × 7 个 latent 帧 × 24×32。第 0 帧和第 17 帧各占一个 latent 帧，其余每 4 帧共用一个</div><div class="arrow">→</div>
+      <div class="node frozen"><b>RGB 分支：H3 VAE 解码器（冻结）</b>36 层 ViT，按 256 像素分块解码 → 重建的 22 帧 RGB</div>
+    </div>
+    <div class="flow">
+      <div class="node frozen"><b>latent</b>同上</div><div class="arrow">→</div>
+      <div class="node train"><b>Adapter：线性支路</b>每一帧按它在所属 latent 里的位置（4 个相位，单帧 latent 另算一种）选一组权重，读自己所在 latent 及前后相邻 latent 的 3×3 空间邻域（24×9×3 = 648 维）→ 1024 维 token。阶段 1 不用这条支路；阶段 2 用岭回归的闭式解初始化</div><div class="arrow">+</div>
+      <div class="node train"><b>Adapter：非线性支路 × γ</b>8 个时空块（宽 768）：7×7 深度卷积 + 沿时间的注意力（帧序号的旋转位置编码）+ MLP。阶段 1 只有这条支路（γ 固定为 1）；阶段 2 中由可学习的门控 γ（初值 0）逐步加入</div><div class="arrow">→</div>
+      <div class="node train"><b>接入 VGGT-Ω 编码器</b>阶段 1：接在编码器的最终输出（24 个块之后再经最后的 LayerNorm，即主干的输入）；阶段 2：接在第 4 层（前 4 个块之后的残差流），替换 DINOv3 的 patch 嵌入和前 4 个块，cls 和 4 个 storage token 改为可学习参数</div><div class="arrow">→</div>
+      <div class="node frozen"><b>VGGT-Ω 其余部分</b>DINOv3 剩下的块 → 主干（24 个帧内块 + 24 个跨帧块）→ DPT 深度头、相机头。阶段 1 冻结；阶段 2 整体以小学习率微调</div>
+    </div>
+    <figcaption>
+      <span><b>说明</b>浅色框为预训练模块，描边框为新训练的模块；“阶段 2 微调”的部分实际是 VGGT-Ω 的一个可训练副本，原版 VGGT-Ω 作为教师保持冻结，在原始 RGB 上运行，只在训练时使用，推理时不需要。</span>
+    </figcaption>
+  </figure>
+  <dl class="block">
+    <dt>教师对齐</dt><dd>按对齐的位置分四种，阶段 1 只用 A，阶段 2 用 A + B + D，C 在阶段 3 加入；四种都会在 4096 个窗口上做消融。<b>A 接入层 token</b>：Adapter 的输出对齐 VGGT-Ω 编码器在同一层的 token（按教师的通道方差归一化的均方误差 + 余弦距离 + 0.5 倍的帧间差分误差 + 0.1 倍的帧间关系矩阵误差）。<b>B 主干 token</b>：VGGT-Ω 主干第 4、11、17、23 层的 token（DPT 头的 4 路输入），以及第 23 层的相机 token 和 16 个寄存器 token（相机头的输入）；每个 token 先做 LayerNorm，再按教师的逐通道统计量白化，计算均方误差（寄存器 token 权重 0.5）。<b>C VAE latent</b>：仿照 VA-VAE，latent 经一个小投影头对齐教师编码器的 token（阶段 3）。<b>D 输出</b>：深度取对数后减去每个窗口的中位数（不受整体尺度影响），比较数值和 x、y 方向的梯度；相机比较平移向量（各帧平移先除以该窗口所有帧平移长度的平均值，去掉整体尺度，方向和相对长度都计入）、四元数和视场角，三项之和乘以权重 5。注意：对齐位置“D 输出”和下文的参照“D（编码再解码）”是两回事。</dd>
+  </dl>
+
+  <h3>阶段 0：两条参照线（T、D）与正确性检查</h3>
+  <figure>
+    <div class="fig-title">两个参照：T（VGGT-Ω 读原始 RGB）与 D（VGGT-Ω 读 H3 编码再解码后的 RGB）</div>
+    <div class="tbl"><table id="tblHoE0"></table></div>
+    <figcaption>
+      <span><b>做了什么</b>T：把原始视频直接输入原版 VGGT-Ω，即我们蒸馏用的教师，也是项目“达到 VGGT-Ω 水平”的那条线。D：先用冻结的 H3 VAE 把视频编码成 latent、再解码回 RGB，把重建的视频输入原版 VGGT-Ω。两者都不训练任何东西，在同样的窗口上用同样的指标计算。PSNR 是冻结编码器 + 冻结解码器重建的 RGB 与原图的平均峰值信噪比，也就是阶段 1、2（编码器冻结）中模型 RGB 输出的质量；阶段 3 微调编码器后 RGB 输出会改变，需要重新测量。</span>
+      <span><b>怎么看</b>T 是蒸馏用的教师本身。阶段 1、2 只用教师蒸馏、没有真值，学生的目标就是 T，所以 T 是这两个阶段的目标线。D 不是严格的上限：重建的 RGB 完全由 latent 决定，“解码成像素再交给原版 VGGT-Ω”本身就是一种读 latent 的方式，所以 D 只说明读冻结 latent 至少能做到这么好。T 与 D 的差包含两部分：VAE 压缩丢掉的信息，以及原版 VGGT-Ω 没见过解码图像的伪影（训练分布之外）造成的退化，因此它高估了 VAE 本身的信息损失。阶段 1 下游冻结，Latent Bridge 的同类实验与“解码再读”大致持平，D 可以当作阶段 1 的实际参照线；阶段 2 下游一起微调、直接适应 latent，原则上可以超过 D（AEON 正是以解码图像不在重建模型的训练分布内为由，不走“解码再重建”的路线），目前是否超过见下文的逐窗口配对比较。阶段 3 会微调编码器并加入真值监督，那时 T 和 D 都只作参照，结果有可能超过它们。</span>
+      <span id="hoE0Concl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">正确性检查</div>
+    <div class="tbl"><table>
+      <tr><th>检查</th><th>做法</th><th>结果</th></tr>
+      <tr><td>VGGT-Ω 从 token 进入</td><td style="text-align:left;white-space:normal">原版 VGGT-Ω 没有“直接输入 token”的接口，我们把它拆成编码器、主干、两个头，可以从编码器任意一层接入。把教师自己的 token 从拆开的入口送进去，与直接输入 RGB 的结果比较</td><td style="text-align:left;white-space:normal">逐位一致（差异为 0）</td></tr>
+      <tr><td>带梯度的第 4 层入口</td><td style="text-align:left;white-space:normal">打开梯度、逐块梯度检查点、DPT 头按 4 帧分块检查点后，从第 4 层送入教师 token，与不带梯度的教师结果比较；并检查反传</td><td style="text-align:left;white-space:normal" id="hoChkGate"></td></tr>
+      <tr><td>Adapter 的线性初始化</td><td style="text-align:left;white-space:normal">γ = 0 时 Adapter 应当恰好等于岭回归的预测</td><td style="text-align:left;white-space:normal" id="hoChkRidge"></td></tr>
+      <tr><td>latent 缓存</td><td style="text-align:left;white-space:normal">从已缓存的训练窗口中取 4 个，用与写缓存时相同的读取、缩放和编码路径重新编码，与缓存的 latent 逐元素比较（预设容差：最大差异 &lt; 1e-3）。验证窗口此前没有缓存，这一步是第一次编码，不涉及这项比较</td><td style="text-align:left;white-space:normal">最大差异 1.4e-3 – 8.9e-3（标准化 latent 单位），<b>超过预设容差，检查记为未通过</b>。这个差异比帧或窗口错位会造成的差异（数量级为 1）小两到三个数量级，我们判断是浮点数值误差（两次编码都开启 TF32，但批次组合和卷积算法选择不同；具体来源没有单独验证），因此继续使用缓存</td></tr>
+    </table></div>
+    <figcaption>
+      <span><b>结论</b>拆开的 VGGT-Ω 入口、带梯度的第 4 层入口和 Adapter 的线性初始化都与预期一致；latent 缓存的复核超过了预设容差，但差异远小于错位造成的量级，判断缓存可用。</span>
+    </figcaption>
+  </figure>
+
+  <h3>选接入层：岭回归探针</h3>
+  <figure>
+    <div class="fig-title">H3 latent 能线性拟合 VGGT-Ω 编码器的哪一层</div>
+    <div class="charts"><div class="chart" id="chHoProbe"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>照 AEON 选接入层的办法：对每种帧类型（4 个相位 + 单帧 latent），用岭回归从 648 维的 latent 邻域（与 Adapter 线性支路的输入相同）拟合 VGGT-Ω 编码器第 0、1、2、4、6、8、12、16、20、24 层的 patch token，以及编码器的最终输出（经过最后的 LayerNorm）。在 96 个训练池窗口上拟合，正则强度在 held-out 窗口上选择。第 ℓ 层指经过 ℓ 个编码器块之后、最后的 LayerNorm 之前的 token，第 0 层即 patch 嵌入的输出；横坐标 25 表示经过最后 LayerNorm 的最终输出（阶段 1 的拟合目标）。R² 按通道标准化后计算，基线是每个窗口、每种帧类型自己的逐通道均值，误差在所有窗口上合并后再算；这个基线比训练评估里的 token R² 更严格，同一个第 4 层映射在验证 32 上这里是 0.578，按训练评估的算法是 0.61，两处不能直接比较。</span>
+      <span><b>怎么看</b>R² 越高，说明这一层越容易从 latent 直接得到；R² 为负表示还不如直接用每个窗口自己的逐通道均值来预测（这个基线用到了答案本身）。灰线为选层阈值 0.6：这个数是我们定的。AEON 只规定取岭回归拟合“可靠”的最浅一层，没有给出数值，它报告第 4 块的线性拟合约能解释 63% 的方差。</span>
+      <span id="hoProbeConcl"></span>
+    </figcaption>
+  </figure>
+
+  <h3>新版阶段 1：Latent Bridge 式诊断（H1）</h3>
+  <dl class="block">
+    <dt>怎么做</dt><dd id="hoS1How"></dd>
+  </dl>
+  <figure>
+    <div class="fig-title">阶段 1 的训练过程</div>
+    <div class="charts"><div class="chart" id="chHoS1Depth"></div><div class="chart" id="chHoS1Rot"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>每 1000 步用 EMA 权重评估一次。蓝色实线为验证 32 个窗口，橙色虚线为 held-out，黄色虚线为训练窗口。</span>
+      <span><b>怎么看</b>越低越好。灰色横线为验证集上的 D 和 T。</span>
+      <span id="hoS1Concl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">阶段 1 的最终结果（第 10000 步）与 8 窗口过拟合检查</div>
+    <div class="tbl"><table id="tblHoS1"></table></div>
+    <figcaption>
+      <span><b>怎么看</b>“过拟合检查”一行：只在 8 个窗口上训练 1500 步，在这 8 个窗口上评估，用来确认整条管线能学到教师的结果。token R² 衡量 Adapter 输出与 VGGT-Ω 编码器最终输出的接近程度。</span>
+      <span id="hoS1TblConcl"></span>
+    </figcaption>
+  </figure>
+
+  <h3>新版阶段 2：AEON 式主方案（H2）</h3>
+  <dl class="block">
+    <dt>怎么做</dt><dd id="hoS2How"></dd>
+    <dt>目前</dt><dd id="hoS2Now"></dd>
+  </dl>
+  <figure>
+    <div class="fig-title">阶段 2 的训练过程</div>
+    <div class="charts"><div class="chart" id="chHoS2Depth"></div><div class="chart" id="chHoS2Rot"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>每 500 步（第 2000 步之后每 1000 步）用 EMA 权重评估一次；第 0 步只有岭回归初始化的线性映射，什么都没有训练。蓝色实线为验证 32 个窗口，绿色虚线为验证 128 个窗口，橙色虚线为 held-out。</span>
+      <span><b>怎么看</b>越低越好，纵轴为对数刻度。灰色横线为验证 32 个窗口上的 D、T 和阶段 1 的最终结果。</span>
+      <span id="hoS2Concl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">阶段 2 各次评估的结果（EMA 权重）</div>
+    <div class="tbl"><table id="tblHoS2"></table></div>
+    <figcaption>
+      <span><b>做了什么</b>阶段 2 每次评估在验证 32、验证 128、held-out 32 三组窗口上的结果。第 0 步是岭回归初始化的线性映射，没有训练；其余各步用 EMA 权重。最后四行是参照：D、T、阶段 1（第 10000 步）和 F2（冻结 DiT 路线，第 2000 步，只有验证 32 有记录）。</span>
+      <span><b>怎么看</b>“与教师的差”把 VGGT-Ω 在原始 RGB 上的预测当作答案；越低越好。</span>
+      <span id="hoS2TblConcl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">逐窗口配对比较：阶段 2 最新结果与各参照</div>
+    <div class="tbl"><table id="tblHoPaired"></table></div>
+    <figcaption>
+      <span><b>做了什么</b>同一批窗口上，阶段 2 最新一次评估（EMA）减去参照，每格依次为：所有窗口的平均差（阶段 2 − 参照）、方括号内的 95% bootstrap 置信区间、最后的百分数为阶段 2 严格优于参照的窗口比例。F2 是冻结 DiT 路线里最好的全量实验（第 2000 步，EMA），只有 32 个验证窗口和训练窗口有记录。</span>
+      <span><b>怎么看</b>深度和角度为负、AUC 为正表示阶段 2 更好；置信区间不包含 0 时加粗。</span>
+      <span id="hoPairedConcl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">Adapter 的内部状态</div>
+    <div class="charts"><div class="chart" id="chHoS2R2"></div><div class="chart" id="chHoS2Gate"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>左：Adapter 输出与 VGGT-Ω 编码器第 4 层 token 的 R²（EMA 权重，验证和 held-out）。右：非线性支路（乘上 γ 之后）与线性支路输出的均方根之比，取自训练日志，每 50 步一个点；AEON 也用这个量判断非线性支路的实际贡献，因为 γ 本身和支路权重的尺度耦合在一起。</span>
+      <span id="hoS2DiagConcl"></span>
+    </figcaption>
+  </figure>
+
+  <h3>可视化：深度、RGB 重建与相机轨迹</h3>
+  <div class="prose"><p id="hoVisIntro">每个窗口一张图，四行为第 0、7、14、21 帧。列从左到右：输入 RGB、H3 VAE 重建的 RGB（冻结编码器 + 冻结解码器，即阶段 1、2 中模型的 RGB 输出）、真值深度、阶段 1、阶段 2、D、T。深度按逆深度着色（暖色近），各列共用取自真值的色标，每个预测整段乘一个系数对齐到真值的中位数深度。图下方左侧是相机轨迹的俯视图（各方法的相机中心用相似变换对齐到真值后画出），右侧是这个窗口上各方法的指标。点击图片可以打开原尺寸。</p></div>
+  <div id="hoVis"></div>
+  <div class="note" id="hoVisConcl"></div>
+
+  <h3>训练过程中的可视化</h3>
+  <div class="prose"><p>训练时每次评估都会保存 4 个验证窗口（carwelding 场景）的对比图，用的是当时未经 EMA 的原始权重（本节其余图表都用 EMA 权重，所以同一步的深度图会和上面略有差异）。“阶段 1 · 8 窗口过拟合检查”一项显示的也是这 4 个验证窗口，它们不在那次实验训练的 8 个窗口里，误差大是预期的。列从左到右：输入 RGB、真值深度、当时的模型、VGGT-Ω（读原始 RGB）、模型的相对误差（|预测 − 真值| / 真值，0 到 0.3 着色，越亮误差越大）；四行为第 0、7、14、21 帧。</p></div>
+  <div class="viewer" id="hoTv">
+    <div class="vctl" style="display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center">
+      <label>实验 <select id="hoTvRun"></select></label>
+      <label>训练步 <select id="hoTvStep"></select></label>
+      <label>窗口 <select id="hoTvClip"></select></label>
+    </div>
+    <div class="colhead" style="--cols:5;margin-top:8px"><span>RGB</span><span>真值</span><span>模型</span><span>VGGT-Ω</span><span>相对误差</span></div>
+    <figure class="vfig"><img id="hoTvImg" alt="训练过程中的深度对比" style="width:100%;display:block;border-radius:4px"></figure>
+  </div>
+  <div class="note"><b>结论</b>阶段 1 的深度图直到第 10000 步都只是大致的远近分布，物体轮廓模糊甚至错位，误差图大片发亮。阶段 2 在第 0 步（只有岭回归线性映射）就有正确的整体布局，但物体被抹开；微调后物体轮廓逐步清楚，到第 2000 步车体、立柱的形状已可辨认，但仍比 VGGT-Ω 模糊，误差集中在网格栏杆和物体边缘。</div>
+  <div class="note" id="hoConcl"><b>结论与下一步</b>加载中。</div>
 </section>
 
 <section id="setup">
@@ -1947,6 +2098,191 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
   selM.value = models.includes("B1") ? "B1" : models[0];
   fillClips(null);
   render();
+
+  // ---------------------------------------------------------------- new version: H3 encoder + VGGT-Omega (R.h3om)
+  try {
+    const HO = R.h3om;
+    if (HO && HO.runs) {
+      const HR = HO.runs, E0 = HO.e0 || {}, H2 = HO.h2 || { evals: {}, curve: [] };
+      const sgnH = (x) => (x == null || isNaN(x)) ? "–" : (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(3);
+      const sgnD = (x) => (x == null || isNaN(x)) ? "–" : (x > 0 ? "+" : x < 0 ? "−" : "") + Math.abs(x).toFixed(2) + "°";
+      const lrf = (x) => x == null ? "–" : (+x).toExponential(0);
+      const lastOf = (arr) => arr && arr.length ? arr[arr.length - 1] : {};
+      const atStep = (arr, s) => (arr || []).find((e) => e.step === s) || {};
+      const h2v = H2.evals.val32_ema || [], h2v128 = H2.evals.val128_ema || [], h2h = H2.evals.held32_ema || [];
+      const h2L = lastOf(h2v), h2L128 = lastOf(h2v128), h2Lh = lastOf(h2h);
+      const h2Step = HO.h2_last;
+      const h2run8k = HR.H2_aeon8k, h2Total = h2run8k ? h2run8k.args.steps : 3000;
+      const h2Now = h2run8k && h2run8k.last_step ? h2run8k.last_step : (HR.H2_aeon || {}).last_step;
+      const h2Done = h2run8k && h2run8k.done;
+      const h1 = HR.H1_bridge || { evals: {} };
+      const h1v = lastOf(h1.evals.val32_ema), h1h = lastOf(h1.evals.held32_ema), h1t = lastOf(h1.evals.train_eval64_ema);
+      const Tv = (E0.val32 || {}).T || {}, Dv = (E0.val32 || {}).D || {};
+      const P = HO.paired || {};
+      const sigTxt = (o) => o && (o.lo > 0 || o.hi < 0) ? "显著" : "不显著";
+      const pctUp = (a, b) => (a && b) ? ((b / a - 1) * 100).toFixed(0) + "%" : "–";
+      const ratio = (o) => o && o.a ? (o.b / o.a).toFixed(1) : "–";
+
+      $("chips").innerHTML += h2Done ? `<span class="chip good">新版本 · 阶段 2（H2）已完成 · 第 ${h2Total} 步</span>`
+        : `<span class="chip live">新版本 · 阶段 2（H2）训练中 · 第 ${h2Now || 0} / ${h2Total} 步（已评估到第 ${h2Step} 步）</span>`;
+
+      // stage 0
+      const SETN = { held32: "held-out 32", val32: "验证 32", val128: "验证 128" };
+      $("tblHoE0").innerHTML = `<tr><th>窗口组</th><th>参照</th><th>深度 AbsRel</th><th>token 级</th><th>旋转</th><th>平移方向</th><th>AUC@30</th><th>重建 PSNR</th></tr>` +
+        ["val32", "val128", "held32"].filter((k) => E0[k]).map((k) => ["T", "D"].map((w, i) =>
+          `<tr${i === 0 ? ' class="sep"' : ""}><td>${i === 0 ? SETN[k] + `（${E0[k].n} 个）` : ""}</td><td>${w === "T" ? "T：原始 RGB" : "D：H3 编码再解码"}</td>` +
+          `<td>${f3(E0[k][w].absrel_frame)}</td><td>${f3(E0[k][w].absrel_tok)}</td><td>${deg(E0[k][w].rot_err_med)}</td><td>${deg(E0[k][w].trans_dir_err_med)}</td><td>${f3(E0[k][w].auc30)}</td>` +
+          `<td>${w === "D" ? f2(E0[k].psnr.psnr_mean) + " dB" : ""}</td></tr>`).join("")).join("");
+      const Th = (E0.held32 || {}).T || {}, Dh = (E0.held32 || {}).D || {};
+      $("hoE0Concl").innerHTML = `<b>结论</b>冻结的 H3 latent 保留了 VGGT-Ω 需要的大部分几何信息，但有可见损失：验证集上 D 的深度 ${f3(Dv.absrel_frame)}、旋转 ${deg(Dv.rot_err_med)}，T 为 ${f3(Tv.absrel_frame)}、${deg(Tv.rot_err_med)}，D 的深度误差比 T 高约 ${pctUp(Tv.absrel_frame, Dv.absrel_frame)}、旋转高约 ${pctUp(Tv.rot_err_med, Dv.rot_err_med)}、平移方向高约 ${pctUp(Tv.trans_dir_err_med, Dv.trans_dir_err_med)}（其中一部分来自原版 VGGT-Ω 没见过解码图像，见上面的说明）；RGB 重建的 PSNR 约 ${f2(((E0.val32 || {}).psnr || {}).psnr_mean)} dB。绝对差距不大，远好于计划里设定的放弃线（D 的深度 ≥ 0.10 或旋转 ≥ 1.5°），所以从冻结编码器开始是可行的。held-out 窗口本身更难：连 T 在上面的深度误差也升到 ${f3(Th.absrel_frame)}（验证集为 ${f3(Tv.absrel_frame)}）；D 为 ${f3(Dh.absrel_frame)}，与 T 的差距和验证集上相近，说明这里的退化主要来自窗口难度，而不是 H3 编码。`;
+      const ts2 = (HO.checks || {}).test_stage2 || {};
+      if (ts2.b1) $("hoChkGate").textContent = `位姿完全一致（差异 0）；深度最大绝对差 ${(+ts2.b1.depth_maxdiff).toFixed(4)}（1 个窗口）${ts2.b2 ? " / " + (+ts2.b2.depth_maxdiff).toFixed(4) + "（2 个窗口）" : ""}，单位是 VGGT-Ω 输出的深度值，比通过阈值 0.05 小一个数量级，来自 DPT 头按 4 帧分块计算的数值差异；梯度能正常反传到输入`;
+      if (ts2.bridge) $("hoChkRidge").textContent = `最大差异 ${(+ts2.bridge.linear_maxdiff).toExponential(1)}（标准化 token 单位）`;
+
+      // probe
+      const PR = HO.probe || {};
+      const lay = Object.keys(PR).filter((k) => k !== "chosen_layer").map((k) => [k === "final" ? 25 : +k, PR[k]]).sort((a, b) => a[0] - b[0]);
+      lineChart($("chHoProbe"), { title: "岭回归 R²（按通道标准化）", xLabel: "VGGT-Ω 编码器层（25 = 最终输出）", yLabel: "R²", fmt: (v) => v.toFixed(3), yMin: -0.4, yMax: 0.75,
+        series: [{ name: "held-out 32", color: "--s1", points: lay.map(([x, r]) => [x, r.r2_held]) },
+                 { name: "验证 32（没见过的场景）", color: "--s2", points: lay.map(([x, r]) => [x, r.r2_val]) }],
+        refs: [{ y: 0.6, label: "阈值 0.6（自定）" }, { y: 0, label: "0" }] });
+      const best = lay.reduce((b, x) => (x[1].r2_held > b[1].r2_held ? x : b), lay[0] || [0, {}]);
+      const fin = PR.final || {};
+      $("hoProbeConcl").innerHTML = `<b>结论</b>浅层很容易从 latent 线性拟合：第 0–6 层的 held-out R² 在 ${f2(Math.min(...lay.filter(([x]) => x <= 6).map(([, r]) => r.r2_held)))}–${f2(Math.max(...lay.filter(([x]) => x <= 6).map(([, r]) => r.r2_held)))} 之间，最好的是第 ${best[0]} 层（held-out ${f3(best[1].r2_held)}，没见过的场景 ${f3(best[1].r2_val)}）；越往深越难，第 12 层以后基本拟合不了，编码器最终输出的 R² 为 ${f3(fin.r2_held)}（验证 ${f3(fin.r2_val)}），比直接用每个窗口自己的逐通道均值来预测还差。阶段 1 去拟合的正是这个最难的目标。按“取线性拟合可靠的最浅一层”的原则（来自 AEON；“可靠”的阈值 held-out R² ≥ 0.6 是我们定的）应选第 ${PR.chosen_layer} 层，但第 4 层在 held-out 和没见过的场景上都更好，AEON 本身也接在第 4 块，所以阶段 2 选第 4 层。`;
+
+      // stage 1
+      const a1 = h1.args || {};
+      $("hoS1How").innerHTML = `H3 编码器和 VGGT-Ω 全部冻结，只训练 Adapter（${((h1.bridge_params || 0) / 1e6).toFixed(1)}M 参数，只用非线性支路，γ 固定为 1），让它的输出拟合 VGGT-Ω 编码器的最终输出（第 24 层之后再经 LayerNorm，即主干的输入）；损失只有教师对齐 A，不用任何真值。batch ${a1.batch}，${a1.steps || 0} 步，学习率 ${lrf(a1.lr)}，前 ${a1.warmup} 步预热、最后 ${100 * (a1.decay_frac || 0)}% 的步数线性衰减；EMA 衰减率上限 ${a1.ema}，按 min(${a1.ema}, (1+t)/(10+t)) 随步数 t 增大。正式训练前先在 8 个窗口上训练 1500 步，确认能拟合。`;
+      const s1series = (key) => [
+        { name: "验证 32", color: "--s1", points: ev(h1, "val32_ema", key) },
+        { name: "held-out 32", color: "--s2", dash: true, points: ev(h1, "held32_ema", key) },
+        { name: "训练窗口", color: "--s4", dash: true, points: ev(h1, "train_eval64_ema", key) }];
+      lineChart($("chHoS1Depth"), { title: "深度 AbsRel（逐帧）", yLabel: "AbsRel", log: true, series: s1series("absrel_frame"),
+        refs: [{ y: Dv.absrel_frame, label: "D（验证）" }, { y: Tv.absrel_frame, label: "T（验证）" }] });
+      lineChart($("chHoS1Rot"), { title: "相对旋转误差（中位数）", yLabel: "度", log: true, fmt: (v) => v.toFixed(2) + "°", series: s1series("rot_err_med"),
+        refs: [{ y: Dv.rot_err_med, label: "D（验证）" }, { y: Tv.rot_err_med, label: "T（验证）" }] });
+      $("hoS1Concl").innerHTML = `<b>结论</b>训练场景里没训练过的窗口（held-out）相对好一些：深度 ${f3(h1h.absrel_frame)}、旋转 ${deg(h1h.rot_err_med)}，但仍明显差于同一批窗口上的 D（${f3(Dh.absrel_frame)}、${deg(Dh.rot_err_med)}）和 T（${f3(Th.absrel_frame)}、${deg(Th.rot_err_med)}）。没见过的场景差得多：验证深度 ${f3(h1v.absrel_frame)}、旋转 ${deg(h1v.rot_err_med)}。最后 ${100 * (a1.decay_frac || 0)}% 的步数学习率线性降到 0，曲线的下降已明显放缓。`;
+      const of8 = HR.H1_of8 || { evals: {} }, of8L = lastOf(of8.evals.train_of);
+      const row1 = (lab, e) => `<td>${lab}</td><td>${f3(e.absrel_frame)}</td><td>${f3(e.absrel_tok)}</td><td>${deg(e.rot_err_med)}</td><td>${deg(e.trans_dir_err_med)}</td><td>${f3(e.auc30)}</td><td>${f3(e.tc_absrel_frame)} / ${deg(e.tc_rot_err_med)}</td><td>${f2(e.r2_all)}</td>`;
+      $("tblHoS1").innerHTML = `<tr><th>窗口组</th><th>深度 AbsRel</th><th>token 级</th><th>旋转</th><th>平移方向</th><th>AUC@30</th><th>与教师的差（深度 / 旋转）</th><th>token R²</th></tr>` +
+        [["训练窗口（64）", h1t], ["held-out（32）", h1h], ["验证（32）", h1v], ["验证（128）", lastOf(h1.evals.val128_ema)]].map(([l, e]) => `<tr>${row1(l, e)}</tr>`).join("") +
+        (of8L.step != null ? `<tr class="sep">${row1(`过拟合检查：8 个被训练的窗口（第 ${of8L.step} 步，未经 EMA）`, of8L)}</tr>` : "");
+      $("hoS1TblConcl").innerHTML = `<b>结论</b>8 个窗口能拟合到与教师几乎一致（深度差 ${f3(of8L.tc_absrel_frame)}、旋转差 ${deg(of8L.tc_rot_err_med)}），管线本身没有问题（这 8 个窗口相对真值的深度误差 ${f3(of8L.absrel_frame)} 基本就是教师本身在这些窗口上的误差）。全量训练后 token R² 在训练场景里约 ${f2(h1h.r2_all)}，在没见过的场景只有 ${f2(h1v.r2_all)}：Adapter 学到的映射主要只适用于 11 个训练场景，换了场景就明显变差。这和探针的结论一致：编码器最终输出离 latent 太远，硬拟合它既难又不泛化。阶段 1 在没见过的场景上旋转已经好于冻结 DiT 路线最好的 F2（${deg((HO.f2_ref.val32 || {}).rot_err_med)}），深度还不如它（F2 ${f3((HO.f2_ref.val32 || {}).absrel_frame)}）。`;
+
+      // stage 2
+      const a2 = (HR.H2_aeon || {}).args || {}, tr2 = (HR.H2_aeon || {}).trainable || {};
+      $("hoS2How").innerHTML = `Adapter 的输出加上可学习的 cls 和 4 个 storage token（初始化为教师在第 4 层的平均值），接到 VGGT-Ω 编码器第 4 层之后；线性支路用岭回归的解初始化，非线性支路由门控 γ（初值 0）逐步加入。VGGT-Ω 第 4 层之后的全部模块（DINOv3 的第 4–23 块、主干、两个头，共 ${((tr2.omega || 0) / 1e9).toFixed(2)}B 参数）以学习率 ${lrf(a2.lr_omega)} 微调，Adapter 和可学习 token 的学习率为 ${lrf(a2.lr)}。只用教师对齐 A + B + D（权重各 1），不用真值。batch ${a2.batch}，前 ${a2.warmup} 步预热，学习率保持不变，最后 20% 的步数线性衰减到 0。EMA 衰减率上限 0.999，实际按 min(0.999, (1+t)/(10+t)) 随全局步数 t 增大：第 500 步约 0.982，第 2000 步约 0.9955，第 8000 步约 0.9989，所以早期的 EMA 结果接近原始权重。`;
+      $("hoS2Now").innerHTML = `最初计划训练 3000 步，之后改为 8000 步：原训练在第 2280 步停止（学习率衰减开始之前），从第 2000 步的权重（模型和 EMA）接着训练，学习率保持不变到第 6400 步，再线性衰减到第 8000 步；接着训练时优化器状态重新开始，用 100 步预热。第 0–2000 步的结果来自原训练，之后来自续训。` +
+        (h2Done ? `已于第 ${h2Total} 步完成。` : `目前训练到第 ${h2Now || 0} 步，最近一次评估在第 ${h2Step} 步；约 ${(HR.H2_aeon8k || HR.H2_aeon).sec_per_step} 秒一步。`);
+      const s2series = (key) => [
+        { name: "验证 32", color: "--s1", points: H2.evals.val32_ema ? ev(H2, "val32_ema", key) : [] },
+        { name: "验证 128", color: "--s3", dash: true, points: H2.evals.val128_ema ? ev(H2, "val128_ema", key) : [] },
+        { name: "held-out 32", color: "--s2", dash: true, points: H2.evals.held32_ema ? ev(H2, "held32_ema", key) : [] }];
+      const st0 = (sp) => (atStep(H2.evals[sp.replace("_ema", "")], 0));
+      for (const [id, key, title, ylab, fmt] of [["chHoS2Depth", "absrel_frame", "深度 AbsRel（逐帧）", "AbsRel", f3], ["chHoS2Rot", "rot_err_med", "相对旋转误差（中位数）", "度", (v) => v.toFixed(2) + "°"]]) {
+        const se = s2series(key);
+        for (const [i, sp] of [[0, "val32_ema"], [1, "val128_ema"], [2, "held32_ema"]]) { const e0 = st0(sp); if (e0[key] != null && !se[i].points.some((p) => p[0] === 0)) se[i].points.unshift([0, e0[key]]); }
+        lineChart($(id), { title, yLabel: ylab, log: true, fmt, series: se,
+          refs: [{ y: Dv[key], label: "D" }, { y: Tv[key], label: "T" }, { y: h1v[key], label: "阶段 1" }] });
+      }
+      const v0 = atStep(H2.evals.val32, 0), v5 = atStep(h2v, 500);
+      const pS = (P.H2step0_vs_H1 || {}).val32 || {}, pS128 = (P.H2step0_vs_H1 || {}).val128 || {};
+      const pSd = pS.absrel_frame || {}, pSr = pS.rot_err_med || {}, pSr128 = pS128.rot_err_med || {};
+      $("hoS2Concl").innerHTML = `<b>结论</b>只把岭回归的线性映射接到第 4 层、什么都不训练（第 0 步），没见过的场景上深度就有 ${f3(v0.absrel_frame)}，好于训练了 1 万步的阶段 1（${f3(h1v.absrel_frame)}；${(100 * (pSd.win || 0)).toFixed(0)}% 的验证窗口更好，差异${sigTxt(pSd)}）。旋转的均值是 ${deg(v0.rot_err_med)} 对 ${deg(h1v.rot_err_med)}，但验证 32 上只有 ${(100 * (pSr.win || 0)).toFixed(0)}% 的窗口更好，差异${sigTxt(pSr)}（95% 置信区间 [${sgnD(pSr.lo)}, ${sgnD(pSr.hi)}]）；验证 128 上差 ${sgnD(pSr128.mean)}，${(100 * (pSr128.win || 0)).toFixed(0)}% 的窗口更好，差异${sigTxt(pSr128)}。下游一起微调后，500 步就到 ${f3(v5.absrel_frame)}、${deg(v5.rot_err_med)}；第 ${h2Step} 步为 ${f3(h2L.absrel_frame)}、${deg(h2L.rot_err_med)}（验证 128 个窗口 ${f3(h2L128.absrel_frame)}、${deg(h2L128.rot_err_med)}）。`;
+      const steps2 = [...new Set((H2.evals.val32 || []).filter((e) => e.step === 0).map((e) => e.step).concat(h2v.map((e) => e.step)))].sort((a, b) => a - b);
+      const getE = (sp, s) => s === 0 ? atStep(H2.evals[sp], 0) : atStep(H2.evals[sp + "_ema"], s);
+      const cell2 = (e) => `<td>${f3(e.absrel_frame)}</td><td>${deg(e.rot_err_med)}</td>`;
+      $("tblHoS2").innerHTML = `<tr><th rowspan="2">训练步</th><th colspan="6" style="text-align:center">验证 32</th><th colspan="2" style="text-align:center">验证 128</th><th colspan="2" style="text-align:center">held-out 32</th></tr>` +
+        `<tr><th>深度</th><th>旋转</th><th>平移方向</th><th>AUC@30</th><th>与教师差·深度</th><th>与教师差·旋转</th><th>深度</th><th>旋转</th><th>深度</th><th>旋转</th></tr>` +
+        steps2.map((s) => { const e = getE("val32", s), e1 = getE("val128", s), e2 = getE("held32", s);
+          return `<tr><td>${s === 0 ? "0（仅线性映射）" : s}</td>${cell2(e)}<td>${deg(e.trans_dir_err_med)}</td><td>${f3(e.auc30)}</td><td>${f3(e.tc_absrel_frame)}</td><td>${deg(e.tc_rot_err_med)}</td>${cell2(e1)}${cell2(e2)}</tr>`; }).join("") +
+        [["参照 D", Dv, (E0.val128 || {}).D || {}, (E0.held32 || {}).D || {}], ["参照 T", Tv, (E0.val128 || {}).T || {}, (E0.held32 || {}).T || {}],
+         ["阶段 1（第 10000 步）", h1v, lastOf(h1.evals.val128_ema), h1h], ["F2（冻结 DiT，第 2000 步）", HO.f2_ref.val32 || {}, {}, {}]].map(([l, a, b, c], i) =>
+          `<tr${i === 0 ? ' class="sep"' : ""}><td>${l}</td>${cell2(a)}<td>${deg(a.trans_dir_err_med)}</td><td>${f3(a.auc30)}</td><td>${a.tc_absrel_frame != null ? f3(a.tc_absrel_frame) : "–"}</td><td>${a.tc_rot_err_med != null ? deg(a.tc_rot_err_med) : "–"}</td>${cell2(b)}${cell2(c)}</tr>`).join("");
+      const e1000 = getE("val32", 1000);
+      $("hoS2TblConcl").innerHTML = `<b>结论</b>到第 ${h2Step} 步，验证 32 的深度从 ${f3(v0.absrel_frame)} 降到 ${f3(h2L.absrel_frame)}，旋转从 ${deg(v0.rot_err_med)} 降到 ${deg(h2L.rot_err_med)}；平移方向 ${deg(h2L.trans_dir_err_med)}，与 D（${deg(Dv.trans_dir_err_med)}）相当。` +
+        (e1000.absrel_frame != null && h2Step > 1000 ? `第 1000 步到第 ${h2Step} 步之间深度只再降了 ${f3(e1000.absrel_frame - h2L.absrel_frame)}。` : "") +
+        `深度仍明显差于 D（验证 32：${f3(h2L.absrel_frame)} 对 ${f3(Dv.absrel_frame)}；held-out：${f3(h2Lh.absrel_frame)} 对 ${f3(Dh.absrel_frame)}），与教师的深度差还有 ${f3(h2L.tc_absrel_frame)}。`;
+      const pcH = (o, isDeg) => !o ? "–" : `<span style="${o.lo > 0 || o.hi < 0 ? "font-weight:600" : ""}">${isDeg ? sgnD(o.mean) : sgnH(o.mean)}</span> <span style="color:var(--ink-3)">[${isDeg ? sgnD(o.lo) : sgnH(o.lo)}, ${isDeg ? sgnD(o.hi) : sgnH(o.hi)}]</span> ${(100 * o.win).toFixed(0)}%`;
+      const PCMP = [["H2_vs_D", "D"], ["H2_vs_T", "T"], ["H2_vs_H1", "阶段 1（第 10000 步）"], ["H2_vs_H2step0", "阶段 2 第 0 步（仅线性映射）"], ["H2_vs_F2", "F2（冻结 DiT）"]];
+      $("tblHoPaired").innerHTML = `<tr><th>阶段 2 第 ${h2Step} 步 − 参照（平均差 [95% 置信区间] 更好窗口占比）</th><th>窗口组</th><th>深度</th><th>token 级深度</th><th>旋转</th><th>平移方向</th><th>AUC@30</th></tr>` +
+        PCMP.map(([k, lab]) => ["val32", "val128", "held32"].filter((sp) => (P[k] || {})[sp]).map((sp, i) => { const o = P[k][sp];
+          return `<tr${i === 0 ? ' class="sep"' : ""}><td>${i === 0 ? lab : ""}</td><td>${SETN[sp]}</td><td>${pcH(o.absrel_frame)}</td><td>${pcH(o.absrel_tok)}</td><td>${pcH(o.rot_err_med, true)}</td><td>${pcH(o.trans_dir_err_med, true)}</td><td>${pcH(o.auc30)}</td></tr>`; }).join("")).join("");
+      const pD = (P.H2_vs_D || {}).val32 || {}, pD128 = (P.H2_vs_D || {}).val128 || {}, pH1 = (P.H2_vs_H1 || {}).val32 || {};
+      const q = (o, k) => (o || {})[k] || {};
+      const sig2 = (o1, o2) => sigTxt(o1) === sigTxt(o2) ? `两组都${sigTxt(o1)}` : `验证 32 ${sigTxt(o1)}、验证 128 ${sigTxt(o2)}`;
+      $("hoPairedConcl").innerHTML = pD.absrel_frame ? `<b>结论</b>相对阶段 1，阶段 2 在${pH1.absrel_frame && pH1.absrel_frame.win === 1 ? `全部 ${pH1.n} 个验证窗口上` : ` ${(100 * ((pH1.absrel_frame || {}).win || 0)).toFixed(0)}% 的验证窗口上`}深度更好（平均 ${sgnH((pH1.absrel_frame || {}).mean)}）。相对参照 D：平移方向差 ${sgnD(q(pD, "trans_dir_err_med").mean)}（验证 128 ${sgnD(q(pD128, "trans_dir_err_med").mean)}，${sig2(q(pD, "trans_dir_err_med"), q(pD128, "trans_dir_err_med"))}）；旋转差 ${sgnD(q(pD, "rot_err_med").mean)}（验证 128 ${sgnD(q(pD128, "rot_err_med").mean)}，即 ${deg(q(pD128, "rot_err_med").b)} 对 ${deg(q(pD128, "rot_err_med").a)}；${sig2(q(pD, "rot_err_med"), q(pD128, "rot_err_med"))}），AUC@30 差 ${sgnH(q(pD, "auc30").mean)}（验证 128 ${sgnH(q(pD128, "auc30").mean)}；${sig2(q(pD, "auc30"), q(pD128, "auc30"))}）；深度差 ${sgnH(pD.absrel_frame.mean)}（验证 128 ${sgnH(q(pD128, "absrel_frame").mean)}），约为 D 的 ${ratio(pD.absrel_frame)} 倍，只有 ${(100 * pD.absrel_frame.win).toFixed(0)}%（验证 128 为 ${(100 * (q(pD128, "absrel_frame").win || 0)).toFixed(0)}%）的窗口比 D 好；只看粗粒度的 token 级深度也差 ${sgnH(q(pD, "absrel_tok").mean)}（${f3(q(pD, "absrel_tok").a)} → ${f3(q(pD, "absrel_tok").b)}，同样约 ${ratio(q(pD, "absrel_tok"))} 倍）。剩下的差距在深度上最大，粗尺度和细节都有；相机也还没有完全追平 D。` : "";
+      lineChart($("chHoS2R2"), { title: "第 4 层 token R²", yLabel: "R²", fmt: (v) => v.toFixed(3),
+        series: [{ name: "验证 32", color: "--s1", points: [[0, st0("val32_ema").r2_all]].filter((p) => p[1] != null).concat(ev(H2, "val32_ema", "r2_all")) },
+                 { name: "held-out 32", color: "--s2", dash: true, points: [[0, st0("held32_ema").r2_all]].filter((p) => p[1] != null).concat(ev(H2, "held32_ema", "r2_all")) }] });
+      const cv = (H2.curve || []).filter((c) => c.rms_lin > 0);
+      lineChart($("chHoS2Gate"), { title: "非线性支路的实际贡献", yLabel: "比值 / γ", fmt: (v) => v.toFixed(3),
+        series: [{ name: "非线性 / 线性（均方根）", color: "--s1", markers: false, points: cv.map((c) => [c.step, c.rms_nl / c.rms_lin]) },
+                 { name: "γ", color: "--s2", dash: true, markers: false, points: cv.map((c) => [c.step, c.gamma]) }] });
+      const cvL = lastOf(cv);
+      const r2min = Math.min(...ev(H2, "val32_ema", "r2_all").map((p) => p[1]).filter((v) => v != null));
+      $("hoS2DiagConcl").innerHTML = `<b>结论</b>第 4 层 token 的 R²（训练评估的算法，与探针的数值不能直接比较）在微调中先从 ${f2(st0("val32_ema").r2_all)} 降到 ${f2(r2min)}，之后回到 ${f2(h2L.r2_all)}，${h2L.r2_all > st0("val32_ema").r2_all ? "只略高于" : "没有超过"}岭回归的起点；非线性支路到第 ${cvL.step} 步只占线性支路的 ${(100 * cvL.rms_nl / cvL.rms_lin).toFixed(0)}%（γ = ${f3(cvL.gamma)}）。也就是说，提升主要来自下游适应了 Adapter 的输出，而不是 Adapter 变得更像教师的 token。可视化里阶段 2 的深度在细小结构上比教师模糊，但差距不只在细节：只看粗粒度的 token 级深度，阶段 2 相对 D 也差 ${sgnH(q(pD, "absrel_tok").mean)}，约为 D 的 ${ratio(q(pD, "absrel_tok"))} 倍，与逐帧深度的倍数（${ratio(pD.absrel_frame)} 倍）相当，说明粗尺度和细节上的误差同比例偏大。这是阶段 3 和消融要解决的问题。`;
+
+      // visuals
+      const VI = HO.vis;
+      if (VI && VI.clips) {
+        const colh = `<div class="colhead" style="--cols:7;margin-top:6px"><span>RGB</span><span>H3 重建 RGB</span><span>真值</span><span>阶段 1</span><span>阶段 2（第 ${VI.h2.step} 步）</span><span>D</span><span>T</span></div>`;
+        const MK = [["H1", "阶段 1", "--s4"], ["H2", `阶段 2`, "--s2"], ["D", "D", "--s3"], ["T", "T", "--s1"]];
+        const traj = (c) => {
+          const sets = [["gt", "真值", "--ink-2", true]].concat(MK.map(([k, l, col]) => [k, l, col, false]));
+          const pts = sets.flatMap(([k]) => (c.centres[k] || []).map((p) => [p[0], p[2]]));
+          const xs = pts.map((p) => p[0]), zs = pts.map((p) => p[1]);
+          const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs), 1e-3) * 1.15;
+          const cx = (Math.max(...xs) + Math.min(...xs)) / 2, cz = (Math.max(...zs) + Math.min(...zs)) / 2, W = 360, H = 300, sc = (Math.min(W, H) - 40) / span;
+          const X = (v) => W / 2 + (v - cx) * sc, Y = (v) => H / 2 - (v - cz) * sc;
+          let sv = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="相机轨迹俯视"><rect width="${W}" height="${H}" fill="${css("--sunk")}" rx="6"/>`;
+          for (const [k, , col, dash] of sets) {
+            const Q = c.centres[k]; if (!Q) continue;
+            sv += `<path d="${Q.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[2]).toFixed(1)).join(" ")}" fill="none" stroke="${css(col)}" stroke-width="${dash ? 2.5 : 1.6}" ${dash ? 'stroke-dasharray="6 4"' : ""}/>`;
+            sv += `<circle cx="${X(Q[0][0])}" cy="${Y(Q[0][2])}" r="3.5" fill="${css(col)}" stroke="${css("--surface")}" stroke-width="1.5"/>`;
+          }
+          return sv + `</svg><div class="legend">${sets.map(([, lab, col, dash]) => `<span><i class="${dash ? "dash" : ""}" style="border-color:${css(col)}"></i>${lab}</span>`).join("")}<span>圆点为第 0 帧；x–z 平面俯视</span></div>`;
+        };
+        const mt = (c) => `<table><tr><th>方法</th><th>深度</th><th>旋转</th><th>平移方向</th><th>AUC@30</th></tr>` +
+          MK.map(([k, l]) => { const m = c.metrics[k] || {}; return `<tr><td style="text-align:left">${l}</td><td>${f3(m.absrel_frame)}</td><td>${deg(m.rot_err_med)}</td><td>${deg(m.trans_dir_err_med)}</td><td>${f3(m.auc30)}</td></tr>`; }).join("") + `</table>`;
+        $("hoVis").innerHTML = VI.clips.map((c) => `<figure class="vfig" style="margin-top:12px"><div class="fig-title">${esc(c.clip)} · ${c.split === "val32" ? "验证（没见过的场景）" : "held-out（训练场景，没训练过的窗口）"}</div>` +
+          colh + `<a href="h3omvis/${c.id}.jpg" target="_blank" rel="noopener" title="打开原尺寸图"><img src="h3omvis/${c.id}.jpg" alt="${esc(c.clip)} 深度与 RGB 重建对比" loading="lazy" style="width:100%;display:block;border-radius:4px"></a>` +
+          `<div class="vrow" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-top:10px"><div style="min-width:0">${traj(c)}</div>` +
+          `<div class="tbl" style="min-width:0">${mt(c)}<div style="font-size:var(--step--1);color:var(--ink-2);margin-top:6px">H3 重建 RGB 的 PSNR：${f2(c.psnr)} dB（四行分别为 ${c.psnr_frames.map(f2).join(" / ")} dB）</div></div></div></figure>`).join("");
+        const vcl = VI.clips.filter((c) => c.split === "val32"), hcl = VI.clips.filter((c) => c.split !== "val32");
+        const rng_ = (cl, k, m) => { const v = cl.map((c) => (c.metrics[k] || {})[m]).filter((x) => x != null); return v.length ? [Math.min(...v), Math.max(...v)] : [NaN, NaN]; };
+        const near = vcl.filter((c) => c.metrics.H2.absrel_frame <= 1.1 * c.metrics.D.absrel_frame).length;
+        const r1 = rng_(vcl, "H1", "absrel_frame"), r1r = rng_(vcl, "H1", "rot_err_med"), r2 = rng_(vcl, "H2", "absrel_frame"), r2r = rng_(vcl, "H2", "rot_err_med"), rD = rng_(vcl, "D", "absrel_frame");
+        $("hoVisConcl").innerHTML = `<b>结论</b>${vcl.length} 个没见过场景的窗口上，阶段 1 的深度图只有大致的远近分布，物体轮廓模糊甚至错位（深度 ${f3(r1[0])}–${f3(r1[1])}，旋转 ${deg(r1r[0])}–${deg(r1r[1])}）；阶段 2 的整体结构已与 D、T 一致（深度 ${f3(r2[0])}–${f3(r2[1])}，旋转 ${deg(r2r[0])}–${deg(r2r[1])}），但栏杆、桁架等细小结构和物体边缘仍比 D、T 模糊。只有 ${near} 个窗口的深度与 D 相当（相差 10% 以内），其余仍明显差于 D（D 为 ${f3(rD[0])}–${f3(rD[1])}）。相机轨迹上，阶段 2、D、T 与真值基本重合。这 ${VI.clips.length} 个窗口的 RGB 重建 PSNR 在 ${f2(Math.min(...VI.clips.map((c) => c.psnr)))}–${f2(Math.max(...VI.clips.map((c) => c.psnr)))} dB 之间` + (() => {
+          const w = VI.clips.reduce((m, c) => (c.psnr < m.psnr ? c : m), VI.clips[0]);
+          const worstH2 = VI.clips.every((c) => c.metrics.H2.absrel_frame <= w.metrics.H2.absrel_frame);
+          return worstH2 ? `；重建最差的窗口（${esc(w.clip)}，${f2(w.psnr)} dB）上，阶段 2 和 D 的深度误差也是最大的（${f3(w.metrics.H2.absrel_frame)}、${f3(w.metrics.D.absrel_frame)}）。` : "。";
+        })();
+        $("hoVisIntro").innerHTML += ` 阶段 1 取第 ${VI.h1.step} 步的 EMA 权重，阶段 2 取第 ${VI.h2.step} 步的 EMA 权重；图下的指标就是这一个窗口上的结果。`;
+      }
+      // training-progress viewer
+      const TV = HO.trainvis || [];
+      if (TV.length) {
+        const RUNL = { H1_of8: "阶段 1 · 8 窗口过拟合检查（图为没训练过的验证窗口）", H1_bridge: "阶段 1（H1）", H2: "阶段 2（H2）" };
+        const runs_ = [...new Set(TV.map((t) => t.run))];
+        const sr = $("hoTvRun"), ss = $("hoTvStep"), sc_ = $("hoTvClip");
+        sr.innerHTML = runs_.map((r) => `<option value="${r}">${RUNL[r] || r}</option>`).join("");
+        sr.value = runs_.includes("H2") ? "H2" : runs_[0];
+        const fillSteps = () => { const st = [...new Set(TV.filter((t) => t.run === sr.value).map((t) => t.step))].sort((a, b) => a - b);
+          ss.innerHTML = st.map((s) => `<option value="${s}">${s}</option>`).join(""); ss.value = st[st.length - 1]; fillClips(); };
+        const fillClips = () => { const cl = TV.filter((t) => t.run === sr.value && t.step === +ss.value);
+          const cur = sc_.value; sc_.innerHTML = cl.map((t) => `<option value="${t.clip}">${esc(t.clip)}</option>`).join("");
+          if (cl.some((t) => t.clip === cur)) sc_.value = cur; show(); };
+        const show = () => { const t = TV.find((x) => x.run === sr.value && x.step === +ss.value && x.clip === sc_.value); if (t) $("hoTvImg").src = `h3omtrain/${t.file}`; };
+        sr.addEventListener("change", fillSteps); ss.addEventListener("change", fillClips); sc_.addEventListener("change", show);
+        fillSteps();
+      }
+      $("hoConcl").innerHTML = `<b>结论与下一步</b>
+        <p style="margin:6px 0 0">① 冻结的 H3 latent 保留了 VGGT-Ω 需要的大部分几何信息（D：验证集深度 ${f3(Dv.absrel_frame)}、旋转 ${deg(Dv.rot_err_med)}；T：${f3(Tv.absrel_frame)}、${deg(Tv.rot_err_med)}），但 D 的误差比 T 高约 ${pctUp(Tv.absrel_frame, Dv.absrel_frame)}–${pctUp(Tv.rot_err_med, Dv.rot_err_med)}，其中一部分来自原版 VGGT-Ω 没见过解码图像；要缩小 VAE 带来的那部分差距，需要阶段 3 微调编码器。</p>
+        <p style="margin:6px 0 0">② 接入位置是关键：编码器最终输出无法从 latent 线性得到，阶段 1 硬拟合它只在训练场景里有效（验证集 ${f3(h1v.absrel_frame)}、${deg(h1v.rot_err_med)}）；接到第 4 层并微调下游（阶段 2），第 ${h2Step} 步验证集深度 ${f3(h2L.absrel_frame)}、旋转 ${deg(h2L.rot_err_med)}、平移方向 ${deg(h2L.trans_dir_err_med)}、AUC ${f3(h2L.auc30)}，远好于冻结 DiT 路线最好的 F2（${f3((HO.f2_ref.val32 || {}).absrel_frame)}、${deg((HO.f2_ref.val32 || {}).rot_err_med)}）。与参照 D 相比，平移方向持平，旋转仍差 ${sgnD(q(pD, "rot_err_med").mean)}（验证 128 ${sgnD(q(pD128, "rot_err_med").mean)}），深度差 ${sgnH(pD.absrel_frame ? pD.absrel_frame.mean : null)}（token 级 ${sgnH(q(pD, "absrel_tok").mean)}），粗尺度和细节上都有差距。</p>
+        <p style="margin:6px 0 0">③ 下一步：阶段 2 训练到第 8000 步；完成阶段 3，即在阶段 2 的基础上加入真值深度和相机损失、解冻 H3 编码器并加入经冻结解码器的 RGB 重建损失，对照组是用同样方案直接微调读原始 RGB 的 VGGT-Ω；之后在 4096 个窗口上做对齐位置 A/B/C/D 和解码器是否解冻的消融。</p>`;
+    }
+  } catch (err) { console.error("h3om section", err); }
 
 })();
 </script>
