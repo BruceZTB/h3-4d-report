@@ -282,6 +282,17 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
     </figcaption>
   </figure>
 
+  <h3>四种做法一览：T、D、H1、H2</h3>
+  <figure>
+    <div class="fig-title">T、D 两条参照线与我们训练的 H1、H2：怎么做的，谁好谁坏</div>
+    <a href="h3omfig/h3om_methods.png" target="_blank" rel="noopener" title="打开原尺寸图"><img src="h3omfig/h3om_methods.png" alt="T、D、H1、H2 的做法框图与结果对比" loading="lazy" style="width:100%;display:block;border-radius:4px"></a>
+    <figcaption>
+      <span><b>做了什么</b>上半部分按同一套列（输入、H3 VAE、patch 嵌入、DINOv3 编码器、VGGT-Ω 主干、深度 / 相机头、输出）画出四种做法：H1、H2 两行中，上面是教师路径（原始 RGB 输入），下面是学生路径（H3 VAE latent 输入），Adapter 正好替换它上方的模块，紫色虚线是对齐损失；右侧列出各自用到的训练信号。下半部分是没见过的场景（验证 128 个窗口）上的四项误差，H2 取第 4000 步、H1 取第 10000 步，都用 EMA 权重。</span>
+      <span><b>怎么看</b>结果部分不标数字：每条线上越靠左越好，位置按对数刻度排列，点之间的距离代表误差的倍数关系。只有在逐窗口配对比较中差异显著的地方，才标出“H2 还差 D 的部分”；平移方向上 H2 与 D 没有显著差别。</span>
+      <span><b>结论</b>四种做法的排序是 T &gt; D &gt; H2 ≫ H1。H2 已经贴近 D：平移方向追平，旋转还差一点，深度差距最明显（逐像素和粗粒度都有）。H1 在每一项上都远远落后，说明接入位置决定成败。</span>
+    </figcaption>
+  </figure>
+
   <h3>可视化：深度、RGB 重建与相机轨迹</h3>
   <div class="prose"><p id="hoVisIntro">每个窗口一张图，四行为第 0、7、14、21 帧。列从左到右：输入 RGB、H3 VAE 重建的 RGB（冻结编码器 + 冻结解码器，即阶段 1、2 中模型的 RGB 输出）、真值深度、阶段 1、阶段 2、D、T。深度按逆深度着色（暖色近），各列共用取自真值的色标，每个预测整段乘一个系数对齐到真值的中位数深度。图下方左侧是相机轨迹的俯视图（各方法的相机中心用相似变换对齐到真值后画出），右侧是这个窗口上各方法的指标。点击图片可以打开原尺寸。</p></div>
   <div id="hoVis"></div>
