@@ -2115,6 +2115,7 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
       const h2run8k = HR.H2_aeon8k, h2Total = h2run8k ? h2run8k.args.steps : 3000;
       const h2Now = h2run8k && h2run8k.last_step ? h2run8k.last_step : (HR.H2_aeon || {}).last_step;
       const h2Done = h2run8k && h2run8k.done;
+      const h2Pause = HO.h2_paused;   // {step, eval}: stopped on request before the planned 8000 steps
       const h1 = HR.H1_bridge || { evals: {} };
       const h1v = lastOf(h1.evals.val32_ema), h1h = lastOf(h1.evals.held32_ema), h1t = lastOf(h1.evals.train_eval64_ema);
       const Tv = (E0.val32 || {}).T || {}, Dv = (E0.val32 || {}).D || {};
@@ -2123,7 +2124,7 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
       const pctUp = (a, b) => (a && b) ? ((b / a - 1) * 100).toFixed(0) + "%" : "–";
       const ratio = (o) => o && o.a ? (o.b / o.a).toFixed(1) : "–";
 
-      $("chips").innerHTML += h2Done ? `<span class="chip good">新版本 · 阶段 2（H2）已完成 · 第 ${h2Total} 步</span>`
+      $("chips").innerHTML += h2Pause ? `<span class="chip warn">新版本 · 阶段 2（H2）暂停在第 ${h2Pause.eval} 步（复盘中）</span>` : h2Done ? `<span class="chip good">新版本 · 阶段 2（H2）已完成 · 第 ${h2Total} 步</span>`
         : `<span class="chip live">新版本 · 阶段 2（H2）训练中 · 第 ${h2Now || 0} / ${h2Total} 步（已评估到第 ${h2Step} 步）</span>`;
 
       // stage 0
@@ -2173,7 +2174,7 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
       const a2 = (HR.H2_aeon || {}).args || {}, tr2 = (HR.H2_aeon || {}).trainable || {};
       $("hoS2How").innerHTML = `Adapter 的输出加上可学习的 cls 和 4 个 storage token（初始化为教师在第 4 层的平均值），接到 VGGT-Ω 编码器第 4 层之后；线性支路用岭回归的解初始化，非线性支路由门控 γ（初值 0）逐步加入。VGGT-Ω 第 4 层之后的全部模块（DINOv3 的第 4–23 块、主干、两个头，共 ${((tr2.omega || 0) / 1e9).toFixed(2)}B 参数）以学习率 ${lrf(a2.lr_omega)} 微调，Adapter 和可学习 token 的学习率为 ${lrf(a2.lr)}。只用教师对齐 A + B + D（权重各 1），不用真值。batch ${a2.batch}，前 ${a2.warmup} 步预热，学习率保持不变，最后 20% 的步数线性衰减到 0。EMA 衰减率上限 0.999，实际按 min(0.999, (1+t)/(10+t)) 随全局步数 t 增大：第 500 步约 0.982，第 2000 步约 0.9955，第 8000 步约 0.9989，所以早期的 EMA 结果接近原始权重。`;
       $("hoS2Now").innerHTML = `最初计划训练 3000 步，之后改为 8000 步：原训练在第 2280 步停止（学习率衰减开始之前），从第 2000 步的权重（模型和 EMA）接着训练，学习率保持不变到第 6400 步，再线性衰减到第 8000 步；接着训练时优化器状态重新开始，用 100 步预热。第 0–2000 步的结果来自原训练，之后来自续训。` +
-        (h2Done ? `已于第 ${h2Total} 步完成。` : `目前训练到第 ${h2Now || 0} 步，最近一次评估在第 ${h2Step} 步；约 ${(HR.H2_aeon8k || HR.H2_aeon).sec_per_step} 秒一步。`);
+        (h2Pause ? `为复盘已完成的实验，训练在第 ${h2Pause.eval} 步评估之后暂停（停在第 ${h2Pause.step} 步）；第 ${h2Pause.eval} 步的模型、EMA 和优化器状态都已保存，复盘后可以从这里接着训练到第 ${h2Total} 步。` : h2Done ? `已于第 ${h2Total} 步完成。` : `目前训练到第 ${h2Now || 0} 步，最近一次评估在第 ${h2Step} 步；约 ${(HR.H2_aeon8k || HR.H2_aeon).sec_per_step} 秒一步。`);
       const s2series = (key) => [
         { name: "验证 32", color: "--s1", points: H2.evals.val32_ema ? ev(H2, "val32_ema", key) : [] },
         { name: "验证 128", color: "--s3", dash: true, points: H2.evals.val128_ema ? ev(H2, "val128_ema", key) : [] },
@@ -2280,7 +2281,7 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
       $("hoConcl").innerHTML = `<b>结论与下一步</b>
         <p style="margin:6px 0 0">① 冻结的 H3 latent 保留了 VGGT-Ω 需要的大部分几何信息（D：验证集深度 ${f3(Dv.absrel_frame)}、旋转 ${deg(Dv.rot_err_med)}；T：${f3(Tv.absrel_frame)}、${deg(Tv.rot_err_med)}），但 D 的误差比 T 高约 ${pctUp(Tv.absrel_frame, Dv.absrel_frame)}–${pctUp(Tv.rot_err_med, Dv.rot_err_med)}，其中一部分来自原版 VGGT-Ω 没见过解码图像；要缩小 VAE 带来的那部分差距，需要阶段 3 微调编码器。</p>
         <p style="margin:6px 0 0">② 接入位置是关键：编码器最终输出无法从 latent 线性得到，阶段 1 硬拟合它只在训练场景里有效（验证集 ${f3(h1v.absrel_frame)}、${deg(h1v.rot_err_med)}）；接到第 4 层并微调下游（阶段 2），第 ${h2Step} 步验证集深度 ${f3(h2L.absrel_frame)}、旋转 ${deg(h2L.rot_err_med)}、平移方向 ${deg(h2L.trans_dir_err_med)}、AUC ${f3(h2L.auc30)}，远好于冻结 DiT 路线最好的 F2（${f3((HO.f2_ref.val32 || {}).absrel_frame)}、${deg((HO.f2_ref.val32 || {}).rot_err_med)}）。与参照 D 相比，平移方向持平，旋转仍差 ${sgnD(q(pD, "rot_err_med").mean)}（验证 128 ${sgnD(q(pD128, "rot_err_med").mean)}），深度差 ${sgnH(pD.absrel_frame ? pD.absrel_frame.mean : null)}（token 级 ${sgnH(q(pD, "absrel_tok").mean)}），粗尺度和细节上都有差距。</p>
-        <p style="margin:6px 0 0">③ 下一步：阶段 2 训练到第 8000 步；完成阶段 3，即在阶段 2 的基础上加入真值深度和相机损失、解冻 H3 编码器并加入经冻结解码器的 RGB 重建损失，对照组是用同样方案直接微调读原始 RGB 的 VGGT-Ω；之后在 4096 个窗口上做对齐位置 A/B/C/D 和解码器是否解冻的消融。</p>`;
+        <p style="margin:6px 0 0">③ 下一步：${h2Pause ? `阶段 2 目前暂停在第 ${h2Pause.eval} 步，复盘后决定是否接着训练到第 ${h2Total} 步` : `阶段 2 训练到第 ${h2Total} 步`}；完成阶段 3，即在阶段 2 的基础上加入真值深度和相机损失、解冻 H3 编码器并加入经冻结解码器的 RGB 重建损失，对照组是用同样方案直接微调读原始 RGB 的 VGGT-Ω；之后在 4096 个窗口上做对齐位置 A/B/C/D 和解码器是否解冻的消融。</p>`;
     }
   } catch (err) { console.error("h3om section", err); }
 
