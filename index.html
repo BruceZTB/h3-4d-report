@@ -342,6 +342,15 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
     </figcaption>
   </figure>
 
+  <figure>
+    <div class="fig-title" id="hoS3TrainTitle">H3 在训练集窗口上的深度</div>
+    <div id="hoS3Train"></div>
+    <figcaption>
+      <span><b>做了什么</b>从训练集的 6 个场景里各取 1 个窗口（都在 4096 个训练窗口中），四行为第 0、7、14、21 帧。列从左到右：RGB、真值深度、H2（第 4000 步）、H3、D、T，最后一列是 H3 的相对误差（|预测 − 真值| / 真值，0 到 0.3 着色，越亮误差越大）。深度按逆深度着色，各列共用取自真值的色标，每个预测整段乘一个系数对齐到真值的中位数；都用 EMA 权重。图下的表是这一个窗口上的指标，绿色加粗为该项最好；“深度（不对齐尺度）”不做中位数对齐。</span>
+      <span id="hoS3TrainConcl"></span>
+    </figcaption>
+  </figure>
+
   <h3>可视化：深度、RGB 重建与相机轨迹</h3>
   <div class="prose"><p id="hoVisIntro">每个窗口一张图，四行为第 0、7、14、21 帧。列从左到右：输入 RGB、H3 VAE 重建的 RGB（冻结编码器 + 冻结解码器，即阶段 1、2 中模型的 RGB 输出）、真值深度、阶段 1、阶段 2、D、T。深度按逆深度着色（暖色近），各列共用取自真值的色标，每个预测整段乘一个系数对齐到真值的中位数深度。图下方左侧是相机轨迹的俯视图（各方法的相机中心用相似变换对齐到真值后画出），右侧是这个窗口上各方法的指标。点击图片可以打开原尺寸。</p></div>
   <div id="hoVis"></div>
@@ -2326,6 +2335,32 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
           refs: [{ y: (1.2870 + 1.5708) / 2, label: "真值" }] });
         const f0 = cv3.length ? cv3[0].fov_mean : null, fL = cv3.length ? cv3[cv3.length - 1].fov_mean : null;
         $("hoS3GtConcl").innerHTML = `<b>结论</b>真值损失在前 ${a3.w_gt_ramp} 步（权重逐步加入期间）迅速下降，之后缓慢下降。视场角从起点的 ${f3(f0)}（教师的取值）移到 ${f3(fL)}，几乎就是真值 ${f3((1.2870 + 1.5708) / 2)}：把教师的视场角蒸馏淡出之后，真值监督确实接管了视场角。`;
+      }
+
+      // ---------------- H3 on training windows (scripts/rep_h3_trainvis.py)
+      const H3T = HO.h3train;
+      if (H3T && H3T.clips && $("hoS3Train")) {
+        const SCN = { abandonedfactory: "废弃工厂", abandonedfactory_night: "废弃工厂（夜）", amusement: "游乐场", hospital: "医院", japanesealley: "日式小巷", neighborhood: "住宅区" };
+        $("hoS3TrainTitle").textContent = `H3 在训练集窗口上的深度（H3 第 ${H3T.h3.step} 步）`;
+        const colh = `<div class="colhead" style="--cols:7;margin-top:6px"><span>RGB</span><span>真值</span><span>H2（第 ${H3T.h2.step} 步）</span><span>H3（第 ${H3T.h3.step} 步）</span><span>D</span><span>T</span><span>H3 相对误差</span></div>`;
+        const KK = [["absrel_frame", f3], ["absrel_raw", f3], ["rot_err_med", deg], ["trans_dir_err_med", deg], ["auc30", f3]];
+        $("hoS3Train").innerHTML = H3T.clips.map((c) => {
+          const m = c.metrics, best = {};
+          for (const [k] of KK) best[k] = ["H2", "H3", "D", "T"].reduce((b, x) => (k === "auc30" ? m[x][k] > m[b][k] : m[x][k] < m[b][k]) ? x : b, "H2");
+          const tb = `<table><tr><th>方法</th><th>深度</th><th>深度（不对齐尺度）</th><th>旋转</th><th>平移方向</th><th>AUC@30</th></tr>` +
+            ["H2", "H3", "D", "T"].map((x) => `<tr><td style="text-align:left">${x}</td>` + KK.map(([k, fm]) => `<td class="${best[k] === x ? "best" : ""}">${fm(m[x][k])}</td>`).join("") + "</tr>").join("") + "</table>";
+          const sc = c.clip.split("/")[0];
+          return `<figure class="vfig" style="margin-top:12px"><div class="fig-title">${esc(SCN[sc] || sc)} · ${esc(c.clip)}</div>${colh}` +
+            `<a href="h3omvis_train/${c.id}.jpg" target="_blank" rel="noopener" title="打开原尺寸图"><img src="h3omvis_train/${c.id}.jpg" alt="${esc(c.clip)} H3 训练窗口深度对比" loading="lazy" style="width:100%;display:block;border-radius:4px"></a>` +
+            `<div class="tbl" style="margin-top:8px">${tb}</div></figure>`;
+        }).join("");
+        const cl = H3T.clips, n = cl.length;
+        const nH2 = cl.filter((c) => c.metrics.H3.absrel_frame < c.metrics.H2.absrel_frame).length;
+        const nT = cl.filter((c) => c.metrics.H3.absrel_frame < c.metrics.T.absrel_frame).length;
+        const nTr = cl.filter((c) => c.metrics.T.rot_err_med < c.metrics.H3.rot_err_med).length;
+        const big = cl.reduce((b, c) => (c.metrics.T.absrel_frame - c.metrics.H3.absrel_frame > b.metrics.T.absrel_frame - b.metrics.H3.absrel_frame ? c : b), cl[0]);
+        const rawH3 = cl.map((c) => c.metrics.H3.absrel_raw), rawT = cl.map((c) => c.metrics.T.absrel_raw);
+        $("hoS3TrainConcl").innerHTML = `<b>结论</b>${n} 个训练窗口中，H3 的深度有 ${nH2} 个好于 H2、${nT} 个好于 T；最明显的是 ${esc(SCN[big.clip.split("/")[0]] || big.clip)}（H3 ${f3(big.metrics.H3.absrel_frame)}，T ${f3(big.metrics.T.absrel_frame)}）：这个窗口里教师本身错得较多，H3 用这个场景的真值把它纠正了过来（这是训练场景，不代表泛化）。不做尺度对齐时，H3 的深度误差为 ${f3(Math.min(...rawH3))}–${f3(Math.max(...rawH3))}，T 为 ${f3(Math.min(...rawT))}–${f3(Math.max(...rawT))}，说明 H3 直接输出真值尺度的深度。H3 的误差主要在物体边缘和树枝、栏杆、网格这类细结构上；相机方面，${nTr} 个窗口上 T 的旋转误差仍比 H3 小。`;
       }
 
       // visuals
