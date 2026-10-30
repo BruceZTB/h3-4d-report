@@ -2296,12 +2296,12 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
       // ---------------- stage 3 (H3): H2@4000 + GT depth / camera
       const H3R = HR.H3_gt;
       if (H3R) {
-        const a3 = H3R.args || {}, h3Step = HO.h3_last, h3Now = H3R.last_step, h3Done = H3R.done;
-        $("chips").innerHTML += h3Done ? `<span class="chip good">新版本 · 阶段 3（H3）已完成 · 第 ${a3.steps} 步</span>`
+        const a3 = H3R.args || {}, h3Step = HO.h3_last, h3Now = H3R.last_step, h3Done = H3R.done, h3Stop = HO.h3_stopped;
+        $("chips").innerHTML += h3Stop ? `<span class="chip warn">新版本 · 阶段 3（H3）已停止在第 ${h3Stop.step} 步（最后评估第 ${h3Stop.eval} 步）</span>` : h3Done ? `<span class="chip good">新版本 · 阶段 3（H3）已完成 · 第 ${a3.steps} 步</span>`
           : `<span class="chip live">新版本 · 阶段 3（H3）训练中 · 第 ${h3Now} / ${a3.steps} 步（已评估到第 ${h3Step} 步）</span>`;
         const win = a3.batch * a3.accum;
         $("hoS3How").innerHTML = `从 H2 第 4000 步的 EMA 权重开始，结构、训练窗口（同样的 4096 个）和评估窗口都与 H2 相同。保留 H2 的三处教师对齐（权重各 1），加入 VGGT-Ω 官方的深度和相机真值损失（相机 + 带置信度的深度及其梯度项 + 由深度和相机反投影的点云，配置与官方发布的默认配置一致；训练进度到 60% 之后点云改用预测的内参），真值损失的权重在前 ${a3.w_gt_ramp} 步从 0 升到 ${a3.w_gt}；教师输出蒸馏里的视场角项随之淡出，改由真值监督。H3 VAE 编码器和解码器都冻结（用缓存的 latent），RGB 输出与原始 H3 VAE 相同。每步 ${win} 个窗口（micro-batch ${a3.batch} × 梯度累积 ${a3.accum}，在显存允许的范围内尽量开大），共 ${a3.steps} 步；学习率 Adapter ${lrf(a3.lr)}、VGGT-Ω ${lrf(a3.lr_omega)}，前 ${a3.warmup} 步预热，最后 ${100 * a3.decay_frac}% 的步数线性衰减。`;
-        $("hoS3Now").innerHTML = h3Done ? `已于第 ${a3.steps} 步完成。` : `训练到第 ${h3Now} 步，最近一次评估在第 ${h3Step} 步；约 ${H3R.sec_per_step} 秒一步。到第 ${a3.steps} 步时共约 ${(a3.steps * win / 1e4).toFixed(1)} 万窗口次（约为 H2 第 4000 步时训练量的 ${(a3.steps * win / 32000).toFixed(1)} 倍），比较时要考虑训练量的差别。`;
+        $("hoS3Now").innerHTML = h3Stop ? `计划 ${a3.steps} 步；按要求在第 ${h3Stop.step} 步停止训练，最后一次评估和检查点在第 ${h3Stop.eval} 步（学习率从第 ${Math.round(a3.steps * (1 - a3.decay_frac))} 步开始衰减，停止前只衰减了约 ${Math.max(0, h3Stop.step - Math.round(a3.steps * (1 - a3.decay_frac)))} 步，下表的结果都在衰减之前）。到第 ${h3Stop.eval} 步共约 ${(h3Stop.eval * win / 1e4).toFixed(1)} 万窗口次，约为 H2 第 4000 步时训练量的 ${(h3Stop.eval * win / 32000).toFixed(1)} 倍。` : h3Done ? `已于第 ${a3.steps} 步完成。` : `训练到第 ${h3Now} 步，最近一次评估在第 ${h3Step} 步；约 ${H3R.sec_per_step} 秒一步。到第 ${a3.steps} 步时共约 ${(a3.steps * win / 1e4).toFixed(1)} 万窗口次（约为 H2 第 4000 步时训练量的 ${(a3.steps * win / 32000).toFixed(1)} 倍），比较时要考虑训练量的差别。`;
         const E3 = H3R.evals;
         const e3 = (sp, s) => s === 0 ? atStep(E3[sp], 0) : atStep(E3[sp + "_ema"], s);
         const steps3 = [...new Set((E3.val32 || []).filter((e) => e.step === 0).map((e) => 0).concat((E3.val32_ema || []).map((e) => e.step)))].sort((a, b) => a - b);
@@ -2420,7 +2420,7 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
       $("hoConcl").innerHTML = `<b>结论与下一步</b>
         <p style="margin:6px 0 0">① 冻结的 H3 latent 保留了 VGGT-Ω 需要的大部分几何信息（D：验证集深度 ${f3(Dv.absrel_frame)}、旋转 ${deg(Dv.rot_err_med)}；T：${f3(Tv.absrel_frame)}、${deg(Tv.rot_err_med)}），但 D 的误差比 T 高约 ${pctUp(Tv.absrel_frame, Dv.absrel_frame)}–${pctUp(Tv.rot_err_med, Dv.rot_err_med)}，其中一部分来自原版 VGGT-Ω 没见过解码图像；要缩小 VAE 带来的那部分差距，需要阶段 3 微调编码器。</p>
         <p style="margin:6px 0 0">② 接入位置是关键：编码器最终输出无法从 latent 线性得到，阶段 1 硬拟合它只在训练场景里有效（验证集 ${f3(h1v.absrel_frame)}、${deg(h1v.rot_err_med)}）；接到第 4 层并微调下游（阶段 2），第 ${h2Step} 步验证集深度 ${f3(h2L.absrel_frame)}、旋转 ${deg(h2L.rot_err_med)}、平移方向 ${deg(h2L.trans_dir_err_med)}、AUC ${f3(h2L.auc30)}，远好于冻结 DiT 路线最好的 F2（${f3((HO.f2_ref.val32 || {}).absrel_frame)}、${deg((HO.f2_ref.val32 || {}).rot_err_med)}）。与参照 D 相比，平移方向持平，旋转仍差 ${sgnD(q(pD, "rot_err_med").mean)}（验证 128 ${sgnD(q(pD128, "rot_err_med").mean)}），深度差 ${sgnH(pD.absrel_frame ? pD.absrel_frame.mean : null)}（token 级 ${sgnH(q(pD, "absrel_tok").mean)}），粗尺度和细节上都有差距。</p>
-        <p style="margin:6px 0 0">③ ${HR.H3_gt ? `阶段 3（H3，方案 A）在 H2 第 4000 步的基础上加入深度和相机真值：第 ${HO.h3_last} 步时验证集深度 ${f3((atStep(HR.H3_gt.evals.val32_ema, HO.h3_last)).absrel_frame)}、旋转 ${deg((atStep(HR.H3_gt.evals.val32_ema, HO.h3_last)).rot_err_med)}，相机已与 D 持平或更好，训练场景里的深度追平了 D，没见过场景上的深度仍是主要差距（见上文）。${HR.H3_gt.done ? "" : `训练中，目标第 ${HR.H3_gt.args.steps} 步。`}` : "阶段 3 准备中。"}</p>
+        <p style="margin:6px 0 0">③ ${HR.H3_gt ? `阶段 3（H3，方案 A）在 H2 第 4000 步的基础上加入深度和相机真值：第 ${HO.h3_last} 步时验证集深度 ${f3((atStep(HR.H3_gt.evals.val32_ema, HO.h3_last)).absrel_frame)}、旋转 ${deg((atStep(HR.H3_gt.evals.val32_ema, HO.h3_last)).rot_err_med)}，相机已与 D 持平或更好，训练场景里的深度追平了 D，没见过场景上的深度仍是主要差距（见上文）。${HO.h3_stopped ? `训练已在第 ${HO.h3_stopped.step} 步停止。` : HR.H3_gt.done ? "" : `训练中，目标第 ${HR.H3_gt.args.steps} 步。`}` : "阶段 3 准备中。"}</p>
         <p style="margin:6px 0 0">④ 下一步：H3 训练结束后，用最终权重重画对比图；RGB 监督和 H3 编码器微调（需要解冻编码器）留到之后单独做；再在 4096 个窗口上做对齐位置 A/B/C/D 和解码器是否解冻的消融。H2 暂停在第 ${h2Pause ? h2Pause.eval : h2Total} 步。</p>`;
     }
   } catch (err) { console.error("h3om section", err); }
