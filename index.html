@@ -351,6 +351,57 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
     </figcaption>
   </figure>
 
+  <h3 id="h3full">新版阶段 3b：从头训练，250 步后只用真值（H3_full）</h3>
+  <dl class="block">
+    <dt>怎么做</dt><dd id="hoFHow"></dd>
+    <dt>为什么</dt><dd>H3 在训练窗口上一直没能明显超过 T。这次检验：同一个架构从头开始、只在前 250 步借助教师，之后完全由真值监督，并把学习率调大、训满 6000 步，看它在 4096 个训练窗口上能拟合到什么程度，以及对没见过的场景有什么影响。</dd>
+    <dt>结果</dt><dd id="hoFNow"></dd>
+  </dl>
+  <figure>
+    <div class="fig-title">H3_full 的训练过程（各组窗口的中位数）</div>
+    <div class="charts"><div class="chart" id="chHoFDepth"></div><div class="chart" id="chHoFRot"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>每 250 步用 EMA 权重评估一次，第 0 步是起点（岭回归初始化的 Adapter + 原版 VGGT-Ω）。四条线分别是训练窗口（train_eval64，都在 4096 个训练窗口中）、held-out（训练场景中没训练过的窗口）和两组没见过的场景（验证 32、验证 128）；每个点是该组窗口的中位数。</span>
+      <span><b>怎么看</b>越低越好，纵轴为对数刻度。虚线横线为 H3（第 2250 步）在验证 32 上的中位数，用来和这次对比。</span>
+      <span id="hoFCurveConcl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">最终结果：H3_full 与 H3、H2、D、T（各组窗口的中位数）</div>
+    <div class="tbl"><table id="tblHoF"></table></div>
+    <figcaption>
+      <span><b>做了什么</b>H3_full 取第 6000 步，H3 取第 2250 步，H2 取第 4000 步，都用 EMA 权重；每格是该组窗口的中位数（均值受少数难窗口影响很大，所以这里用中位数）。“相对 T”是深度中位数除以 T 的深度中位数。训练窗口上没有 D 的结果。</span>
+      <span><b>怎么看</b>越低越好（AUC 越高越好）；每组里最好的学生模型（H3_full、H3、H2）加粗。</span>
+      <span id="hoFTblConcl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">逐窗口配对比较：H3_full 与 H3、T、D</div>
+    <div class="tbl"><table id="tblHoFPaired"></table></div>
+    <figcaption>
+      <span><b>做了什么</b>同一批窗口上，H3_full（第 6000 步）减去对比对象，每格依次为平均差、方括号内的 95% bootstrap 置信区间、H3_full 严格更好的窗口比例。</span>
+      <span><b>怎么看</b>深度和角度为负、AUC 为正表示 H3_full 更好；置信区间不包含 0 时加粗。</span>
+      <span id="hoFPairedConcl"></span>
+    </figcaption>
+  </figure>
+  <figure>
+    <div class="fig-title">训练损失：深度停住，相机还在下降</div>
+    <div class="charts"><div class="chart" id="chHoFLossD"></div><div class="chart" id="chHoFLossC"></div></div>
+    <figcaption>
+      <span><b>做了什么</b>取自训练日志，每 500 步取平均（训练时每步 16 个随机训练窗口，单步数值波动大）。左：VGGT-Ω 真值损失中的深度回归项（不含置信度项）和额外加入的 log 深度梯度损失；右：相机项和点云项。第 250 步起关掉教师对齐。</span>
+      <span id="hoFLossConcl"></span>
+    </figcaption>
+  </figure>
+  <h4 style="margin:18px 0 4px">H3_full 的可视化：5 个训练窗口 + 5 个没见过场景的窗口</h4>
+  <div class="prose"><p>训练窗口取自训练集的 5 个不同场景（每个场景 1 个，都在 4096 个训练窗口中）；没见过场景的窗口在验证 128 个窗口里按名称排序后等间隔取 5 个（两个验证场景都有），不是挑出来的。四行为第 0、7、14、21 帧。列从左到右：RGB、真值深度、H3（第 2250 步）、H3_full（第 6000 步）、D、T，最后一列是 H3_full 的相对误差（|预测 − 真值| / 真值，0 到 0.3 着色，越亮误差越大）。深度按逆深度着色（暖色近），各列共用取自真值的色标，每个预测整段乘一个系数对齐到真值的中位数；都用 EMA 权重。图下左侧是相机中心的俯视轨迹（相似变换对齐到真值），右侧是这个窗口上的指标，绿色加粗为该项最好。点击图片可以打开原尺寸。训练窗口上的 D 只作参照（D 读的是解码后的 RGB，不经过训练）。</p></div>
+  <div class="controls" id="hoFTabs" style="display:flex;flex-wrap:wrap;gap:8px;margin:8px 0">
+    <button type="button" class="on" data-s="train_eval64" aria-pressed="true">训练窗口（5 个）</button>
+    <button type="button" data-s="val128" aria-pressed="false">没见过的场景（5 个）</button>
+    <button type="button" data-s="all" aria-pressed="false">全部 10 个</button>
+  </div>
+  <div id="hoFVis"></div>
+  <div class="note" id="hoFVisConcl"></div>
+
   <h3>可视化：深度、RGB 重建与相机轨迹</h3>
   <div class="prose"><p id="hoVisIntro">每个窗口一张图，四行为第 0、7、14、21 帧。列从左到右：输入 RGB、H3 VAE 重建的 RGB（冻结编码器 + 冻结解码器，即阶段 1、2 中模型的 RGB 输出）、真值深度、阶段 1、阶段 2、D、T。深度按逆深度着色（暖色近），各列共用取自真值的色标，每个预测整段乘一个系数对齐到真值的中位数深度。图下方左侧是相机轨迹的俯视图（各方法的相机中心用相似变换对齐到真值后画出），右侧是这个窗口上各方法的指标。点击图片可以打开原尺寸。</p></div>
   <div id="hoVis"></div>
@@ -2363,6 +2414,99 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
         $("hoS3TrainConcl").innerHTML = `<b>结论</b>${n} 个训练窗口中，H3 的深度有 ${nH2} 个好于 H2、${nT} 个好于 T；最明显的是 ${esc(SCN[big.clip.split("/")[0]] || big.clip)}（H3 ${f3(big.metrics.H3.absrel_frame)}，T ${f3(big.metrics.T.absrel_frame)}）：这个窗口里教师本身错得较多，H3 用这个场景的真值把它纠正了过来（这是训练场景，不代表泛化）。不做尺度对齐时，H3 的深度误差为 ${f3(Math.min(...rawH3))}–${f3(Math.max(...rawH3))}，T 为 ${f3(Math.min(...rawT))}–${f3(Math.max(...rawT))}，说明 H3 直接输出真值尺度的深度。H3 的误差主要在物体边缘和树枝、栏杆、网格这类细结构上；相机方面，${nTr} 个窗口上 T 的旋转误差仍比 H3 小。`;
       }
 
+      // ---------------- H3_full: from scratch, distillation only for 250 steps, then GT only (2026-10-31)
+      const HF = HR.H3_full;
+      if (HF && HO.h3full_median && $("hoFHow")) {
+        const af = HF.args || {}, fStep = HO.h3full_last, MED = HO.h3full_median, TRJ = HO.h3full_traj || {};
+        const winF = (af.batch || 0) * (af.accum || 1);
+        const md = (m, sp) => ((MED[m] || {})[sp]) || {};
+        const SPL = [["train_eval64", "训练窗口 64"], ["held32", "held-out 32"], ["val32", "验证 32"], ["val128", "验证 128"]];
+        $("hoFHow").innerHTML = `与 H2 第 0 步相同的起点（岭回归初始化的 Adapter + 原版 VGGT-Ω），H3 VAE 编码器冻结，同样的 4096 个训练窗口和评估窗口。前 ${af.distill_steps} 步同时用三处教师对齐（各 1）和 VGGT-Ω 真值损失（权重在前 ${af.w_gt_ramp} 步从 0 升到 ${af.w_gt}）；第 ${af.distill_steps} 步起关掉教师对齐（也不再运行教师），只用真值损失，另加一项多尺度 log 深度梯度损失（权重 ${af.w_lgrad}，对近处和远处的深度结构同等计权，用来加强细节；VGGT-Ω 真值损失自带的梯度和法向项照常保留）。每步 ${winF} 个窗口（micro-batch ${af.batch} × 梯度累积 ${af.accum}），共 ${af.steps} 步；学习率 Adapter ${lrf(af.lr)}、VGGT-Ω ${lrf(af.lr_omega)}（分别是 H2/H3 的 2.5 倍和 5 倍），前 ${af.warmup} 步预热，之后余弦衰减到峰值的 ${Math.round(100 * af.lr_min)}%。`;
+        const F = md("H3_full", "train_eval64"), G = md("H3_gt", "train_eval64"), Tt = md("T", "train_eval64");
+        const Fv = md("H3_full", "val32"), Gv = md("H3_gt", "val32"), Tvv = md("T", "val32"), Fv8 = md("H3_full", "val128"), Gv8 = md("H3_gt", "val128");
+        $("hoFNow").innerHTML = `${HF.done ? `已完成 ${af.steps} 步` : `训练到第 ${HF.last_step} 步`}（共约 ${(af.steps * winF / 1e4).toFixed(1)} 万窗口次，每个训练窗口约 ${(af.steps * winF / 4096).toFixed(0)} 遍）。训练窗口上深度中位数 ${f3(F.absrel_frame)}，好于 H3 的 ${f3(G.absrel_frame)}，是 T（${f3(Tt.absrel_frame)}）的 ${(F.absrel_frame / Tt.absrel_frame).toFixed(2)} 倍；没见过的场景上明显差于 H3（验证 32：${f3(Fv.absrel_frame)} 对 ${f3(Gv.absrel_frame)}，验证 128：${f3(Fv8.absrel_frame)} 对 ${f3(Gv8.absrel_frame)}）。`;
+        // curves (medians)
+        const tsteps = Object.keys(TRJ).map(Number).sort((a, b) => a - b);
+        const serF = (key) => [["train_eval64", "训练窗口", "--s4", false], ["held32", "held-out", "--s2", true], ["val32", "验证 32", "--s1", false], ["val128", "验证 128", "--s3", true]].map(([sp, nm, col, dash]) =>
+          ({ name: nm, color: col, dash, points: tsteps.map((s) => [s, ((TRJ[s] || {})[sp] || {})[key]]).filter((p) => p[1] != null) }));
+        lineChart($("chHoFDepth"), { title: "深度 AbsRel（逐帧，中位数）", yLabel: "AbsRel", log: true, series: serF("absrel_frame"), refs: [{ y: Gv.absrel_frame, label: "H3 · 验证 32" }] });
+        lineChart($("chHoFRot"), { title: "相对旋转误差（中位数）", yLabel: "度", log: true, fmt: (v) => v.toFixed(2) + "°", series: serF("rot_err_med"), refs: [{ y: Gv.rot_err_med, label: "H3 · 验证 32" }] });
+        const tAt = (s, sp, k) => ((TRJ[s] || {})[sp] || {})[k];
+        const s1 = tsteps.find((s) => s >= af.distill_steps) || 250;
+        $("hoFCurveConcl").innerHTML = `<b>结论</b>前 ${s1} 步（有教师对齐）所有窗口组都大幅改善：验证 32 的深度 ${f3(tAt(0, "val32", "absrel_frame"))} → ${f3(tAt(s1, "val32", "absrel_frame"))}。之后两类窗口走势分开：训练窗口的深度从 ${f3(tAt(s1, "train_eval64", "absrel_frame"))} 一直降到 ${f3(tAt(fStep, "train_eval64", "absrel_frame"))}，旋转从 ${deg(tAt(s1, "train_eval64", "rot_err_med"))} 降到 ${deg(tAt(fStep, "train_eval64", "rot_err_med"))}；没见过场景上的深度基本不再变化（验证 32：${f3(tAt(s1, "val32", "absrel_frame"))} → ${f3(tAt(fStep, "val32", "absrel_frame"))}），始终在 H3 的水平线之上；相机旋转在没见过的场景上仍在慢慢变好（${deg(tAt(s1, "val32", "rot_err_med"))} → ${deg(tAt(fStep, "val32", "rot_err_med"))}）。`;
+        // final table (medians)
+        const ML = [["H3_full", `H3_full（第 ${fStep} 步）`], ["H3_gt", "H3（第 2250 步）"], ["H2", "H2（第 4000 步）"], ["D", "D"], ["T", "T"]];
+        const KQ = [["absrel_frame", f3, false], ["absrel_raw", f3, false], ["rot_err_med", deg, false], ["trans_dir_err_med", deg, false], ["auc30", f3, true]];
+        $("tblHoF").innerHTML = `<tr><th>窗口组</th><th>模型</th><th>深度</th><th>相对 T</th><th>深度（不对齐尺度）</th><th>旋转</th><th>平移方向</th><th>AUC@30</th></tr>` +
+          SPL.map(([sp, spn]) => {
+            const stud = ["H3_full", "H3_gt", "H2"], best = {};
+            for (const [k, , hi] of KQ) best[k] = stud.reduce((b, x) => { const v = md(x, sp)[k], bv = md(b, sp)[k]; return v == null ? b : bv == null || (hi ? v > bv : v < bv) ? x : b; }, stud[0]);
+            const tD = md("T", sp).absrel_frame;
+            return ML.filter(([m]) => md(m, sp).n).map(([m, lab], i) => { const e = md(m, sp);
+              return `<tr${i === 0 ? ' class="sep"' : ""}><td>${i === 0 ? spn : ""}</td><td style="text-align:left">${lab}</td>` +
+                KQ.map(([k, fm], j) => (j === 1 ? `<td>${tD ? (e.absrel_frame / tD).toFixed(2) + "×" : "–"}</td>` : "") + `<td class="${stud.includes(m) && best[k] === m ? "best" : ""}">${fm(e[k])}</td>`).join("") + "</tr>"; }).join("");
+          }).join("");
+        const r_ = (m, sp) => (md(m, sp).absrel_frame / md("T", sp).absrel_frame).toFixed(2);
+        $("hoFTblConcl").innerHTML = `<b>结论</b>训练窗口上 H3_full 是目前最好的学生模型：深度为 T 的 ${r_("H3_full", "train_eval64")} 倍（H3 为 ${r_("H3_gt", "train_eval64")} 倍），平移方向 ${deg(F.trans_dir_err_med)} 好于 T 的 ${deg(Tt.trans_dir_err_med)}，不对齐尺度的深度 ${f3(F.absrel_raw)} 远低于 T 的 ${f3(Tt.absrel_raw)}（T 不知道真值的尺度）。但离真值仍有距离，深度中位数还有 ${(100 * F.absrel_frame).toFixed(1)}%。训练场景中没训练过的窗口（held-out）上与 H3 持平（${f3(md("H3_full", "held32").absrel_frame)} 对 ${f3(md("H3_gt", "held32").absrel_frame)}）。没见过的场景上深度明显变差：验证 32 是 T 的 ${r_("H3_full", "val32")} 倍（H3 为 ${r_("H3_gt", "val32")} 倍），验证 128 是 ${r_("H3_full", "val128")} 倍（H3 为 ${r_("H3_gt", "val128")} 倍）；旋转与 H3 相当。`;
+        // paired
+        const PCF = [["H3full_vs_H3", "H3（第 2250 步）"], ["H3full_vs_T", "T"], ["H3full_vs_D", "D"]];
+        const SETN2 = { train_eval64: "训练窗口 64", ...SETN };
+        $("tblHoFPaired").innerHTML = `<tr><th>H3_full 第 ${fStep} 步 − 对比对象（平均差 [95% 置信区间] 更好窗口占比）</th><th>窗口组</th><th>深度</th><th>旋转</th><th>平移方向</th><th>AUC@30</th></tr>` +
+          PCF.map(([k, lab]) => ["train_eval64", "held32", "val32", "val128"].filter((sp) => (P[k] || {})[sp]).map((sp, i) => { const o = P[k][sp];
+            return `<tr${i === 0 ? ' class="sep"' : ""}><td>${i === 0 ? lab : ""}</td><td>${SETN2[sp]}</td><td>${pcH(o.absrel_frame)}</td><td>${pcH(o.rot_err_med, true)}</td><td>${pcH(o.trans_dir_err_med, true)}</td><td>${pcH(o.auc30)}</td></tr>`; }).join("")).join("");
+        const pw = (k, sp, key) => { const o = q((P[k] || {})[sp], key); return o.win != null ? (100 * o.win).toFixed(0) + "%" : "–"; };
+        $("hoFPairedConcl").innerHTML = `<b>结论</b>训练窗口上，H3_full 的深度在 ${pw("H3full_vs_H3", "train_eval64", "absrel_frame")} 的窗口上好于 H3、${pw("H3full_vs_T", "train_eval64", "absrel_frame")} 的窗口上好于 T，平移方向在 ${pw("H3full_vs_T", "train_eval64", "trans_dir_err_med")} 的窗口上好于 T。没见过的场景上，深度只在 ${pw("H3full_vs_H3", "val32", "absrel_frame")}（验证 32）和 ${pw("H3full_vs_H3", "val128", "absrel_frame")}（验证 128）的窗口上好于 H3，没有一个窗口好于 T。即：只用真值的训练把训练场景拟合得更好，但丢掉了 H3 从教师那里得到的、对新场景有用的知识。`;
+        // losses (500-step means of the logged training steps)
+        const LB = HO.h3full_loss500 || [];
+        lineChart($("chHoFLossD"), { title: "深度相关损失（每 500 步平均）", yLabel: "损失", fmt: (v) => v.toFixed(3), series: [
+          { name: "深度回归项", color: "--s1", points: LB.map((c) => [c.step, c.gt_loss_reg_depth]) },
+          { name: "log 深度梯度项", color: "--s3", dash: true, points: LB.map((c) => [c.step, c.loss_lgrad]) }] });
+        lineChart($("chHoFLossC"), { title: "相机与点云损失（每 500 步平均）", yLabel: "损失", log: true, fmt: (v) => v.toFixed(3), series: [
+          { name: "相机项", color: "--s2", points: LB.map((c) => [c.step, c.gt_loss_camera]) },
+          { name: "点云项", color: "--s4", dash: true, points: LB.map((c) => [c.step, c.gt_loss_point]) }] });
+        const lb = (s) => LB.find((c) => c.step === s) || {}, N = af.steps;
+        $("hoFLossConcl").innerHTML = `<b>结论</b>深度回归项从第 500 步的 ${f3(lb(500).gt_loss_reg_depth)} 降到第 4500 步的 ${f3(lb(4500).gt_loss_reg_depth)}，之后学习率继续衰减也不再下降（第 ${N} 步为 ${f3(lb(N).gt_loss_reg_depth)}）；同一时期相机项还从 ${f3(lb(4500).gt_loss_camera)} 降到 ${f3(lb(N).gt_loss_camera)}。额外的 log 深度梯度项从头到尾基本是平的（${f3(lb(500).loss_lgrad)} → ${f3(lb(N).loss_lgrad)}），没有看到它带来的细节改善。深度在训练窗口上停在这个水平，不是因为训练步数或学习率不够，更可能是输入路径（冻结的 H3 latent 经 Adapter 到 token）本身带不出更多深度细节，这与之前 64 个窗口的过拟合测试一致。`;
+        // panels
+        const FV = HO.h3fullvis;
+        if (FV && FV.clips) {
+          const SCNF = { abandonedfactory: "废弃工厂", abandonedfactory_night: "废弃工厂（夜）", amusement: "游乐场", hospital: "医院", japanesealley: "日式小巷", neighborhood: "住宅区", carwelding: "汽车焊接车间", endofworld: "世界尽头", gascola: "加油站", ocean: "海底", office: "办公室", oldtown: "老城", seasidetown: "海边小镇", seasonsforest: "四季森林", seasonsforest_winter: "四季森林（冬）", soulcity: "灵魂之城", westerndesert: "西部沙漠" };
+          const MKF = [["H3_gt", `H3（第 ${FV.steps.H3_gt} 步）`, "--s2"], ["H3_full", `H3_full（第 ${FV.steps.H3_full} 步）`, "--s4"], ["D", "D", "--s3"], ["T", "T", "--s1"]];
+          const colh = `<div class="colhead" style="--cols:7;margin-top:6px"><span>RGB</span><span>真值</span><span>H3</span><span>H3_full</span><span>D</span><span>T</span><span>H3_full 相对误差</span></div>`;
+          const trajF = (c) => {
+            const sets = [["gt", "真值", "--ink-2", true]].concat(MKF.map(([k, l, col]) => [k, l, col, false]));
+            const pts = sets.flatMap(([k]) => (c.centres[k] || []).map((p) => [p[0], p[2]]));
+            const xs = pts.map((p) => p[0]), zs = pts.map((p) => p[1]);
+            const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs), 1e-3) * 1.15;
+            const cx = (Math.max(...xs) + Math.min(...xs)) / 2, cz = (Math.max(...zs) + Math.min(...zs)) / 2, W = 360, H = 300, sc = (Math.min(W, H) - 40) / span;
+            const X = (v) => W / 2 + (v - cx) * sc, Y = (v) => H / 2 - (v - cz) * sc;
+            let sv = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="相机轨迹俯视"><rect width="${W}" height="${H}" fill="${css("--sunk")}" rx="6"/>`;
+            for (const [k, , col, dash] of sets) {
+              const Q = c.centres[k]; if (!Q) continue;
+              sv += `<path d="${Q.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[2]).toFixed(1)).join(" ")}" fill="none" stroke="${css(col)}" stroke-width="${dash ? 2.5 : 1.6}" ${dash ? 'stroke-dasharray="6 4"' : ""}/>`;
+              sv += `<circle cx="${X(Q[0][0])}" cy="${Y(Q[0][2])}" r="3.5" fill="${css(col)}" stroke="${css("--surface")}" stroke-width="1.5"/>`;
+            }
+            return sv + `</svg><div class="legend">${sets.map(([, lab, col, dash]) => `<span><i class="${dash ? "dash" : ""}" style="border-color:${css(col)}"></i>${lab}</span>`).join("")}<span>圆点为第 0 帧；x–z 平面俯视</span></div>`;
+          };
+          const KK = [["absrel_frame", f3, false], ["absrel_raw", f3, false], ["rot_err_med", deg, false], ["trans_dir_err_med", deg, false], ["auc30", f3, true]];
+          const mtF = (c) => { const m = c.metrics, best = {};
+            for (const [k, , hi] of KK) best[k] = MKF.map(([x]) => x).reduce((b, x) => (hi ? m[x][k] > m[b][k] : m[x][k] < m[b][k]) ? x : b, "H3_gt");
+            return `<table><tr><th>方法</th><th>深度</th><th>深度（不对齐尺度）</th><th>旋转</th><th>平移方向</th><th>AUC@30</th></tr>` +
+              MKF.map(([x, l]) => `<tr><td style="text-align:left">${l}</td>` + KK.map(([k, fm]) => `<td class="${best[k] === x ? "best" : ""}">${fm(m[x][k])}</td>`).join("") + "</tr>").join("") + "</table>"; };
+          const card = (c) => { const sc = c.clip.split("/")[0];
+            return `<figure class="vfig" style="margin-top:12px"><div class="fig-title">${c.split === "train_eval64" ? "训练窗口" : "没见过的场景"} · ${esc(SCNF[sc] || sc)} · ${esc(c.clip)}</div>${colh}` +
+              `<a href="h3fullvis/${c.id}.jpg" target="_blank" rel="noopener" title="打开原尺寸图"><img src="h3fullvis/${c.id}.jpg" alt="${esc(c.clip)} H3_full 深度对比" loading="lazy" style="width:100%;display:block;border-radius:4px"></a>` +
+              `<div class="vrow" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-top:10px"><div style="min-width:0">${trajF(c)}</div><div class="tbl" style="min-width:0">${mtF(c)}</div></div></figure>`; };
+          const showF = (s) => { $("hoFVis").innerHTML = FV.clips.filter((c) => s === "all" || c.split === s).map(card).join("");
+            document.querySelectorAll("#hoFTabs button").forEach((b) => { const on = b.dataset.s === s; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); }); };
+          document.querySelectorAll("#hoFTabs button").forEach((b) => b.addEventListener("click", () => showF(b.dataset.s)));
+          showF("train_eval64");
+          const trc = FV.clips.filter((c) => c.split === "train_eval64"), vac = FV.clips.filter((c) => c.split !== "train_eval64");
+          const cnt = (cl, a_, b_, k = "absrel_frame") => cl.filter((c) => c.metrics[a_][k] < c.metrics[b_][k]).length;
+          const rngF = (cl, k, m) => { const v = cl.map((c) => c.metrics[k][m]); return `${f3(Math.min(...v))}–${f3(Math.max(...v))}`; };
+          $("hoFVisConcl").innerHTML = `<b>结论</b>${trc.length} 个训练窗口中，H3_full 的深度有 ${cnt(trc, "H3_full", "H3_gt")} 个好于 H3、${cnt(trc, "H3_full", "T")} 个好于 T（H3_full ${rngF(trc, "H3_full", "absrel_frame")}，T ${rngF(trc, "T", "absrel_frame")}）；${vac.length} 个没见过场景的窗口中，${cnt(vac, "H3_full", "H3_gt") ? `只有 ${cnt(vac, "H3_full", "H3_gt")} 个好于 H3` : "没有一个好于 H3"}、${cnt(vac, "H3_full", "T") ? `${cnt(vac, "H3_full", "T")} 个好于 T` : "也没有一个好于 T"}（H3_full ${rngF(vac, "H3_full", "absrel_frame")}，H3 ${rngF(vac, "H3_gt", "absrel_frame")}，T ${rngF(vac, "T", "absrel_frame")}）。从误差图看，训练窗口上 H3_full 的误差集中在物体边缘和树枝、草丛、栏杆这类细结构上，大面积区域已经接近真值；没见过的场景上，除了边缘，还会出现整块区域的深度错误，一些物体（例如汽车焊接车间里的车身）被抹平甚至消失，而 D 和 T 都能画出来。相机旋转误差：训练窗口上 H3_full ${rngF(trc, "H3_full", "rot_err_med").replace(/(\d\.\d+)/g, (x) => (+x).toFixed(2) + "°")}，没见过的场景上 ${rngF(vac, "H3_full", "rot_err_med").replace(/(\d\.\d+)/g, (x) => (+x).toFixed(2) + "°")}（T ${rngF(vac, "T", "rot_err_med").replace(/(\d\.\d+)/g, (x) => (+x).toFixed(2) + "°")}）。`;
+        }
+      }
+
       // visuals
       const VI = HO.vis;
       if (VI && VI.clips) {
@@ -2421,7 +2565,8 @@ dl.gloss dd { margin: 0; color: var(--ink-2); min-width: 0; }
         <p style="margin:6px 0 0">① 冻结的 H3 latent 保留了 VGGT-Ω 需要的大部分几何信息（D：验证集深度 ${f3(Dv.absrel_frame)}、旋转 ${deg(Dv.rot_err_med)}；T：${f3(Tv.absrel_frame)}、${deg(Tv.rot_err_med)}），但 D 的误差比 T 高约 ${pctUp(Tv.absrel_frame, Dv.absrel_frame)}–${pctUp(Tv.rot_err_med, Dv.rot_err_med)}，其中一部分来自原版 VGGT-Ω 没见过解码图像；要缩小 VAE 带来的那部分差距，需要阶段 3 微调编码器。</p>
         <p style="margin:6px 0 0">② 接入位置是关键：编码器最终输出无法从 latent 线性得到，阶段 1 硬拟合它只在训练场景里有效（验证集 ${f3(h1v.absrel_frame)}、${deg(h1v.rot_err_med)}）；接到第 4 层并微调下游（阶段 2），第 ${h2Step} 步验证集深度 ${f3(h2L.absrel_frame)}、旋转 ${deg(h2L.rot_err_med)}、平移方向 ${deg(h2L.trans_dir_err_med)}、AUC ${f3(h2L.auc30)}，远好于冻结 DiT 路线最好的 F2（${f3((HO.f2_ref.val32 || {}).absrel_frame)}、${deg((HO.f2_ref.val32 || {}).rot_err_med)}）。与参照 D 相比，平移方向持平，旋转仍差 ${sgnD(q(pD, "rot_err_med").mean)}（验证 128 ${sgnD(q(pD128, "rot_err_med").mean)}），深度差 ${sgnH(pD.absrel_frame ? pD.absrel_frame.mean : null)}（token 级 ${sgnH(q(pD, "absrel_tok").mean)}），粗尺度和细节上都有差距。</p>
         <p style="margin:6px 0 0">③ ${HR.H3_gt ? `阶段 3（H3，方案 A）在 H2 第 4000 步的基础上加入深度和相机真值：第 ${HO.h3_last} 步时验证集深度 ${f3((atStep(HR.H3_gt.evals.val32_ema, HO.h3_last)).absrel_frame)}、旋转 ${deg((atStep(HR.H3_gt.evals.val32_ema, HO.h3_last)).rot_err_med)}，相机已与 D 持平或更好，训练场景里的深度追平了 D，没见过场景上的深度仍是主要差距（见上文）。${HO.h3_stopped ? `训练已在第 ${HO.h3_stopped.step} 步停止。` : HR.H3_gt.done ? "" : `训练中，目标第 ${HR.H3_gt.args.steps} 步。`}` : "阶段 3 准备中。"}</p>
-        <p style="margin:6px 0 0">④ 下一步：H3 训练结束后，用最终权重重画对比图；RGB 监督和 H3 编码器微调（需要解冻编码器）留到之后单独做；再在 4096 个窗口上做对齐位置 A/B/C/D 和解码器是否解冻的消融。H2 暂停在第 ${h2Pause ? h2Pause.eval : h2Total} 步。</p>`;
+        <p style="margin:6px 0 0">④ ${HR.H3_full && HO.h3full_median ? `从头训练、250 步后只用真值的 H3_full（${HR.H3_full.args.steps} 步）：训练窗口上深度中位数 ${f3(((HO.h3full_median.H3_full || {}).train_eval64 || {}).absrel_frame)}，好于 H3，达到 T 的水平（T ${f3(((HO.h3full_median.T || {}).train_eval64 || {}).absrel_frame)}），但深度回归损失在训练后段停住、离真值仍远；没见过的场景上深度明显差于 H3（验证 32 中位数 ${f3(((HO.h3full_median.H3_full || {}).val32 || {}).absrel_frame)} 对 ${f3(((HO.h3full_median.H3_gt || {}).val32 || {}).absrel_frame)}），且从第 250 步起不再改善。教师对齐是新场景泛化的来源，不应过早关掉；只靠真值和更长的训练也无法让训练窗口逼近真值。` : "H3_full 准备中。"}</p>
+        <p style="margin:6px 0 0">⑤ 下一步（都是直接改目标模型）：保留教师对齐（至少主干 token 对齐 B）贯穿全程以保住泛化；以小学习率解冻 H3 编码器（配合 RGB 重建约束，保证 RGB 输出不变差），突破训练窗口上的深度瓶颈。H2 暂停在第 ${h2Pause ? h2Pause.eval : h2Total} 步，H3 停在第 ${HO.h3_stopped ? HO.h3_stopped.step : HO.h3_last} 步。</p>`;
     }
   } catch (err) { console.error("h3om section", err); }
 
